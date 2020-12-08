@@ -1,0 +1,76 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(glue)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(tictoc)
+
+library(patchwork)
+
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+```
+
+```{r}
+hists <- readRDS(file=file.path(out.dir, "num_cc_hists.rds"))
+hist_all <- hists$hist_all
+hist_nonhh <- hists$hist_nonhh
+plot_relationships_avgpp_withci <- readRDS(file.path(out.dir, 'plot_relationships.rds'))
+plot_locations_avgpp_withci <- readRDS(file.path(out.dir, 'plot_locations.rds'))
+```
+
+## Figure with histograms / relationship and location on top of each other
+
+```{r rel_loc_combo_plot, fig.height=5, fig.width=8}
+fig.width <- 16 
+fig.height <- 8 
+
+design <- "
+   123333
+   124444
+"
+
+comb_lr_plot <- 
+  (hist_all + hist_nonhh & guides(fill=FALSE)) +
+  plot_relationships_avgpp_withci + plot_locations_avgpp_withci +
+  plot_layout(design=design) +
+  plot_annotation(tag_levels='A') +
+  NULL
+
+ggsave(file.path(out.dir, 'hists_relationships_locations_avgpp_withci.png'),
+     width=fig.width, height=fig.height,
+     comb_lr_plot)
+ggsave(file.path(out.dir, 'hists_relationships_locations_avgpp_withci.pdf'),
+     width=fig.width, height=fig.height,
+     comb_lr_plot)
+
+comb_lr_plot
+```

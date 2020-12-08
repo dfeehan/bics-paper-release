@@ -1,0 +1,285 @@
+---
+title: "Sensitivity analysis using only conversational contacts"
+output: html_notebook
+---
+
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(glue)
+library(patchwork)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(tictoc)
+
+library(patchwork)
+
+tic("Running file")
+```
+
+Note that the bootstrap directory here should be changed if the bootstraps change
+
+```{r}
+## survey data
+df <-             readRDS(file=here('bics-paper-code', 'data', 'df_all_waves.rds'))
+df_alters <-      readRDS(file=here('bics-paper-code', 'data', 'df_alters_all_waves.rds'))
+## bootstrap resamples
+df_boot <-        readRDS(file=here('bics-paper-code', 'data', 'df_boot_all_waves.rds'))
+df_boot_alters <- readRDS(file=here('bics-paper-code', 'data', 'df_alters_boot_all_waves.rds'))
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+```
+
+### Relationships for now-hh contacts histogram -- version w/ only cc contacts
+
+
+```{r}
+rel_nice_names <- c(
+  'altercustomer'="This person is my customer/client*",
+  'egoclient'="I am this person's customer/client*",
+  'spouse'="Spouse/romantic partner",
+  'other'='Other',
+  'work'="Work colleague/classmate",
+  'neighbor'="Neighbor/community member",
+  'family'='Family',
+  'friend'='Friend'
+)
+
+tic("Calculating weighted num interviews per bootstrap rep")
+wgt_num_int_boot <- df_boot %>%
+  mutate(wave = factor(wave)) %>%
+  group_by(wave, boot_idx) %>%
+  summarize(wave_wgt_tot = sum(boot_weight))
+toc()
+
+tic("Calculating average per person contacts by relationship")
+alter_rel_onlycc_avgpp_summ <- df_boot_alters %>%
+  left_join(df_alters %>% select(rid, alter_num, alter_weight_onlycc, hh_alter, starts_with('rel_')),
+            by=c('rid', 'alter_num')) %>%
+  filter(! hh_alter) %>%
+  mutate(weight = boot_weight * alter_weight) %>%
+  # get weighted total reported contacts in each relationship
+  group_by(wave, boot_idx) %>%
+  summarize_at(vars(starts_with('rel_')), ~sum(as.numeric(.x)*weight)) %>%
+  ungroup() %>%
+  mutate(wave = factor(wave)) %>%
+  # join in the weight totals for this wave and bootstrap rep 
+  left_join(wgt_num_int_boot, by=c('wave', 'boot_idx')) %>%
+  # calculate avg number reported per person
+  mutate_at(vars(starts_with('rel_')), ~ .x / wave_wgt_tot) %>%
+  # make long-form
+  pivot_longer(cols=starts_with('rel_'),
+             names_to='var',
+             values_to='avg_pp') %>%
+  mutate(var = str_replace(var, 'rel_', '')) %>%
+  mutate(var = recode(var, !!!rel_nice_names)) %>%
+  mutate(var = fct_reorder(var, avg_pp)) %>%
+  # summarize
+  group_by(wave, var) %>%
+  summarize(avg_pp_ci_low = quantile(avg_pp, .025, na.rm=TRUE),
+            avg_pp_ci_high = quantile(avg_pp, .975, na.rm=TRUE),
+            avg_pp = mean(avg_pp, na.rm=TRUE))
+toc()
+```
+
+
+```{r rel_hist}
+dodge_amt <- .8
+fig.width <- 8
+fig.height <- 5
+
+
+plot_relationships_onlycc_avgpp_withci <- ggplot(alter_rel_onlycc_avgpp_summ) +
+  geom_col(aes(x=var, y=avg_pp, fill=wave),
+           position=position_dodge(dodge_amt)) +
+  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+                    # this is odd -- for position_dodge to work with the error bars,
+                    # need to have the fill aesthetc set (even though there's no fill for
+                    # error bars)
+                    fill=wave),
+                width=.2,
+                position=position_dodge(dodge_amt)) +
+  xlab("") +
+  labs(caption=str_wrap("* NB: Added to the instrument after Wave 0", width=55)) +
+  ylab(str_wrap("Avg. number of non-household contacts (conversational contact only)", width=20)) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width=10)) +
+  #coord_flip() +
+  #facet_grid(. ~ wave) +
+  theme(axis.text.x = element_text(size=rel(.9))) +
+  #      legend.position='bottom') +
+  #theme(legend.position=c(0,-.4), legend.direction='horizontal') +
+  theme(plot.caption = element_text(size=rel(0.7))) +
+  guides(fill=FALSE) +
+  wave_fill +
+  NULL
+
+saveRDS(plot_relationships_onlycc_avgpp_withci, file.path(out.dir, 'plot_relationships_onlycc.rds'))
+
+ggsave(file.path(out.dir, 'relationships_avgpp_onlycc_withci.png'),
+       width=fig.width, height=fig.height,
+       plot_relationships_onlycc_avgpp_withci)
+
+ggsave(file.path(out.dir, 'relationships_avgpp_onlycc_withci.pdf'),
+       width=fig.width, height=fig.height,
+       plot_relationships_onlycc_avgpp_withci)
+
+plot_relationships_onlycc_avgpp_withci
+```
+
+
+## Locations for non-hh contacts histogram -- version w/ only cc contacts
+
+```{r}
+tic("Calculating weighted num interviews per bootstrap rep")
+wgt_num_int_boot <- df_boot %>%
+  mutate(wave = factor(wave)) %>%
+  group_by(wave, boot_idx) %>%
+  summarize(wave_wgt_tot = sum(boot_weight))
+toc()
+
+loc_nice_names <- c(
+  'church'="Place of worship",
+  'restbar'="Bar/Restaurant",
+  'school'='School',
+  'transit'="Transit",
+  'other'='Other',
+  'work'='Work',
+  'store'='Store/Business',
+  'street'='On the street',
+  'home'="Someone's home*"
+)
+
+tic("Calculating average per person contacts by location")
+alter_loc_onlycc_avgpp_summ <- df_boot_alters %>%
+  left_join(df_alters %>% select(rid, alter_num, alter_weight_onlycc, hh_alter, starts_with('loc_')),
+            by=c('rid', 'alter_num')) %>%
+  filter(! hh_alter) %>%
+  mutate(weight = boot_weight * alter_weight_onlycc) %>%
+  mutate(loc_home = case_when(wave == 0 ~ loc_home,
+                            wave > 0 & loc_egohome  ~ TRUE,
+                            wave > 0 & loc_otherhome ~ TRUE,
+                            wave > 0  ~ FALSE,
+                            TRUE ~ loc_home)) %>%
+  select(-loc_egohome, -loc_otherhome) %>% 
+  # get weighted total reported contacts in each relationship
+  group_by(wave, boot_idx) %>%
+  summarize_at(vars(starts_with('loc_')), ~sum(as.numeric(.x)*weight)) %>%
+  ungroup() %>%
+  mutate(wave = factor(wave)) %>%
+  # join in the weight totals for this wave and bootstrap rep 
+  left_join(wgt_num_int_boot, by=c('wave', 'boot_idx')) %>%
+  # calculate avg number reported per person
+  mutate_at(vars(starts_with('loc_')), ~ .x / wave_wgt_tot) %>%
+  # make long-form
+  pivot_longer(cols=starts_with('loc_'),
+             names_to='var',
+             values_to='avg_pp') %>%
+  mutate(var = str_replace(var, 'loc_', '')) %>%
+  mutate(var = recode(var, !!!loc_nice_names)) %>%
+  mutate(var = fct_reorder(var, avg_pp)) %>%
+  # summarize
+  group_by(wave, var) %>%
+  summarize(avg_pp_ci_low = quantile(avg_pp, .025),
+            avg_pp_ci_high = quantile(avg_pp, .975),
+            avg_pp = mean(avg_pp))
+toc()
+```
+
+```{r loc_hist}
+fig.width <- 8
+fig.height <- 5
+
+dodge_amt <- 0.8
+
+plot_locations_onlycc_avgpp_withci <- ggplot(alter_loc_onlycc_avgpp_summ) +
+  geom_col(aes(x=var, y=avg_pp, fill=wave),
+           position=position_dodge(dodge_amt)) +
+  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+                  # this is odd -- for position_dodge to work with the error bars,
+                  # need to have the fill aesthetic set (even though there's no fill for
+                  # error bars)
+                  fill=wave),
+              width=.2,
+              position=position_dodge(dodge_amt)) +
+  xlab("") +
+  labs(caption=str_wrap("NB: *wording for this response changed after Wave 0", width=55)) +
+  ylab(str_wrap("Avg. number of non-household contacts (conversational contact only)", width=20)) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width=10)) +
+  wave_fill +
+  theme(axis.text.x = element_text(size=rel(.9))) +
+  theme(legend.position=c(0.1,-.35), legend.direction='horizontal') +
+  theme(plot.caption = element_text(size=rel(0.7))) +
+  NULL
+
+
+saveRDS(plot_locations_onlycc_avgpp_withci, file.path(out.dir, 'plot_locations_onlycc.rds'))
+
+
+ggsave(file.path(out.dir, 'locations_avgpp_onlycc_withci.png'),
+     width=fig.width, height=fig.height,
+     plot_locations_onlycc_avgpp_withci)
+ggsave(file.path(out.dir, 'locations_avgpp_onlycc_withci.pdf'),
+     width=fig.width, height=fig.height,
+     plot_locations_onlycc_avgpp_withci)
+
+plot_locations_onlycc_avgpp_withci
+```
+```{r rel_loc_sens_combo_plot, fig.height=5, fig.width=8}
+fig.width <- 7.5 
+fig.height <- 6 
+
+design <- "
+   1111 
+   2222 
+"
+
+comb_lr_plot <- 
+  (plot_relationships_onlycc_avgpp_withci + 
+   plot_locations_onlycc_avgpp_withci &
+   theme(legend.text=element_text(size=8),
+         legend.title=element_text(size=8),
+         axis.title=element_text(size=8),
+         text=element_text(size=rel(8)))) +
+  plot_layout(design=design) +
+  plot_annotation(tag_levels='A') &
+  theme(plot.tag=element_text(size=10)) 
+
+
+ggsave(file.path(out.dir, 'hists_relationships_locations_onlycc_avgpp_withci.png'),
+     width=fig.width, height=fig.height,
+     comb_lr_plot)
+ggsave(file.path(out.dir, 'hists_relationships_locations_onlycc_avgpp_withci.pdf'),
+     width=fig.width, height=fig.height,
+     comb_lr_plot)
+
+comb_lr_plot
+```
+
+```{r}
+toc()
+```
+
+
+

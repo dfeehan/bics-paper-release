@@ -1,0 +1,954 @@
+---
+title: "Calculate contact matrices from pooled bootstrapped data"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(autumn)
+library(tictoc)
+
+library(future)
+library(furrr)
+
+library(ggthemes)
+library(cowplot)
+library(glue)
+
+library(knitr)
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(patchwork)
+
+tic("Entire contact matrices file, start to finish")
+```
+
+ Directory w/ bootstrap weights
+
+```{r}
+data.dir <- here('bics-paper-code', 'data')
+out.dir <- here('bics-paper-code', 'data', 'contact-matrices')
+#boot.out.dir <- here('data', 'lucid', 'bootstrapped')
+#out.dir <- here('data', 'lucid', 'bootstrapped', 'contact-matrices')
+```
+
+
+Create an output directory for these bootstraps, if it doesn't already exist
+
+```{r}
+dir.create(out.dir)
+```
+
+```{r ggplot-theme}
+theme_set(theme_cowplot())
+```
+
+TODO - bootstrap code? and for fb data?
+
+## Load data
+
+```{r load-survey-data}
+## grab wave comparison data
+df <- readRDS(file=file.path(data.dir, 'df_all_waves.rds'))
+df_alters <- readRDS(file=file.path(data.dir, 'df_alters_all_waves.rds'))
+
+dfw0 <- df %>% filter(wave == 0)
+dfw0_alters <- df_alters %>% 
+  filter(wave == 0) %>% 
+  mutate(weight_pooled = ego_weight_pooled)
+  # no info about masks collected in wave 0, so no need for a nomask alter weight here
+
+dfrest_alters <- df_alters %>% 
+  filter(wave != 0) %>%
+  mutate(weight_pooled = ego_weight_pooled) %>%
+  mutate(alter_weight_nomask = ifelse((! hh_alter) & protect_mask, 0, alter_weight))
+
+dfw1 <- df %>% filter(wave == 1)
+dfw1_alters <- dfrest_alters %>% 
+  filter(wave == 1) 
+
+dfw2 <- df %>% filter(wave == 2)
+dfw2_alters <- dfrest_alters %>% 
+  filter(wave == 2) 
+
+dfw3 <- df %>% filter(wave == 3)
+dfw3_alters <- dfrest_alters %>% 
+  filter(wave == 3) 
+```
+
+```{r load-boot-weighted-data}
+all_boot <- readRDS(file = file.path(data.dir, 'df_boot_all_waves.rds'))
+all_alters_boot <- readRDS(file = file.path(data.dir, 'df_alters_boot_all_waves.rds'))
+dfw0_bootwgt <- all_boot %>% filter(wave == 0)
+dfw1_bootwgt <- all_boot %>% filter(wave == 1)
+dfw2_bootwgt <- all_boot %>% filter(wave == 2)
+dfw3_bootwgt <- all_boot %>% filter(wave == 3)
+dfw0_alters_bootwgt <- all_alters_boot %>% filter(wave == 0)
+dfw1_alters_bootwgt <- all_alters_boot %>% filter(wave == 1)
+dfw2_alters_bootwgt <- all_alters_boot %>% filter(wave == 2)
+dfw3_alters_bootwgt <- all_alters_boot %>% filter(wave == 3)
+fb_bootwgt <- readRDS(file=file.path(data.dir, 'fb-2015-svy', 'fb_bootstrapped_weights.rds'))
+```
+
+Get data from 2015 Facebook survey
+
+```{r}
+fb2015_alters <- read_csv(file=file.path(data.dir, 'fb-2015-svy', 'fb_alters.csv')) %>%
+  mutate(alter_agecat_fb = factor(alter_agecat_fb),
+         ego_agecat_fb = factor(ego_agecat_fb, levels=levels(alter_agecat_fb))) %>%
+  # to match lucid data, call the id 'rid'
+  mutate(rid = paste(ego_rownum)) %>%
+  rename(weight = ego_weight) %>%
+  group_by(ego_rownum) %>%
+  mutate(alter_num = 1:n(),
+         num_alters_reported = n()) %>%
+  ungroup()
+
+fb2015 <- read_csv(file=file.path(data.dir, 'fb-2015-svy', 'fb_ego.csv')) %>%
+  mutate(agecat_fb = factor(ego_agecat_fb, levels=levels(fb2015_alters$alter_agecat_fb))) %>%
+  rename(weight = ego_weight) %>%
+  # to match lucid data, call the id 'rid'
+  mutate(rid = paste(ego_rownum)) %>%
+  select(-ego_agecat_fb) %>%
+  mutate(city = 'FB')
+```
+
+
+Get weighting targets
+
+```{r load-targets}
+acs18_national_targets <- readRDS(file=file.path(data.dir, 'ACS', 'acs18_national_targets.rds'))
+```
+
+Get age margins
+
+```{r}
+## grab age distns for making contact matrix symmetric
+acs18_agecat_w0_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs18_wave0_agecat.rds')) %>%
+  rename(agecat_w0 = agecat) %>%
+  mutate(agecat_w0 = factor(agecat_w0, levels=levels(df_alters$alter_agecat_w0)))
+
+acs15_w0_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs15_wave0_agecat.rds'))
+
+acs15_fb_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs15_fb_agecat.rds')) %>%
+  mutate(agecat_fb = factor(agecat, levels=levels(fb2015_alters$alter_agecat_fb))) %>%
+  select(-agecat)
+```
+
+### Standardize factor levels for various age categories
+
+We'll want agecat to be a factor with same levels in all of the datasets, to avoid lots of repetitive warnings below.
+The factor levels aren't identical because some levels don't occur in some contexts.
+For example, we hae no survey respondents under 18, so the 0-17 cateogry does not show up in the respondent
+agecat variable. On the other hand, that level does show up in reports about contacts, since adults can report
+contacts with someone under 18. In that case, we want to add '0-17' to the levels of the age category factor
+in the respondent data.
+
+This code ugly, but I haven't figured out a cleaner way to do this.
+
+
+**Age cateogries used in Wave 0 (with Waves 1 and 2 for compatibility)**
+
+```{r}
+levels_agecat_w0 <- fct_unify(list(acs18_agecat_w0_margins$agecat_w0,
+                                   dfw1$agecat_w0,
+                                   dfw1_alters$ego_agecat_w0,
+                                   dfw1_alters$alter_agecat_w0,
+                                   dfw2$agecat_w0,
+                                   dfw2_alters$ego_agecat_w0,
+                                   dfw2_alters$alter_agecat_w0,
+                                   dfw3$agecat_w0,
+                                   dfw3_alters$ego_agecat_w0,
+                                   dfw3_alters$alter_agecat_w0,
+                                   # NB: these were missing, so putting them
+                                   # at the end
+                                   dfw0$agecat_w0,
+                                   dfw0_alters$ego_agecat_w0
+                                   ))
+
+acs18_agecat_w0_margins$agecat_w0 <- levels_agecat_w0[[1]]
+dfw1$agecat_w0                    <- levels_agecat_w0[[2]]
+dfw1_alters$ego_agecat_w0         <- levels_agecat_w0[[3]]
+dfw1_alters$alter_agecat_w0       <- levels_agecat_w0[[4]]
+dfw2$agecat_w0                    <- levels_agecat_w0[[5]]
+dfw2_alters$ego_agecat_w0         <- levels_agecat_w0[[6]]
+dfw2_alters$alter_agecat_w0       <- levels_agecat_w0[[7]]
+dfw3$agecat_w0                    <- levels_agecat_w0[[8]]
+dfw3_alters$ego_agecat_w0         <- levels_agecat_w0[[9]]
+dfw3_alters$alter_agecat_w0       <- levels_agecat_w0[[10]]
+dfw0$agecat_w0                    <- levels_agecat_w0[[11]]
+dfw0_alters$ego_agecat_w0         <- levels_agecat_w0[[12]]
+```
+
+### Calculate contact matrices from bootstrapped data
+
+Function to do the actual calculating
+
+```{r fn-calculate_contact_matrix}
+##
+## ego_df - the respondent dataset
+##          (assumed to have a variable whose name matches AGEVAR (see param below), 
+##           and also a weight variable, assumed to be called called 'weight' if nothing passed in)
+## alter_df - the contact dataset
+##          (assumed to have a variable w/ age of alter called alter_[AGEVAR]
+##              AND a variable w/ age of ego called ego_[AGEVAR]
+##              AND a variable 'ego_[WEIGHTVAR]' with the weight of the respondent who reported the contact)
+##              AND a variable 'alter_weight' with the weight for the specific contact report
+##              AND a variable 'hh_alter' that is TRUE if the alter comes from the same hh as respondent and FALSE otherwise
+## age_margins - df with the population total in each age group, assumed to have a variable matching AGEVAR; used for symmetrizing the matrix. NOTE that this should only have values for age groups that contribute survey respondents. For example, if nobody from the youngest age group was interviewed as part of the survey, then age_margins should not have an entry for the youngest age group
+## weightvar - if NULL, assume that there is a variable called 'weight' in ego_df and in alter_df;
+##             otherwise, assume they are called WEIGHTVAR in both ego_df and in alter_df
+## alter_weightvar - name for the within-respondent alter weight. 
+##             if NULL, assume that there is a variable called 'alter_weight' in alter_df;
+##             otherwise, use the name passed in
+## agevar - if NULL, assume that ages are already .ego_age, .alter_age, etc;
+##          otherwise, do the renaming 
+##
+##
+calculate_contact_matrix <- function(ego_df, 
+                                     alter_df, 
+                                     age_margins,
+                                     weightvar=NULL, 
+                                     alter_weightvar=NULL, 
+                                     agevar=NULL, 
+                                     wave0=FALSE) {
+  
+  # make clean weight vars
+  if(is.null(weightvar)) {
+    weightvar <- 'weight' 
+  }
+  
+  wmap <- c('.weight'=weightvar)
+  alter_wmap <- c('.ego_weight'=weightvar)
+                  
+  ego_df <- ego_df %>%  rename(!!wmap)
+  alter_df <- alter_df %>% rename(!!alter_wmap)
+  
+  # make clean alter weight vars
+  if(is.null(alter_weightvar)) {
+    alter_weightvar <- 'alter_weight' 
+  }
+  
+  altervar_wmap <- c('.alter_weight'=alter_weightvar)
+  alter_df <- alter_df %>% rename(!!altervar_wmap)
+  
+  # make clean age vars
+  if (! is.null(agevar)) {
+    agemap <- c('.agecat'=agevar)
+    alter_agemap <- c('.ego_agecat'=paste0('ego_', agevar),
+                      '.alter_agecat'=paste0('alter_', agevar))
+    
+    # call all of the age vars '.agecat'
+    ego_df <- ego_df %>%  rename(!!agemap)
+    alter_df <- alter_df %>% rename(!!alter_agemap)
+    age_margins <- age_margins %>% rename(!!agemap)
+     
+    # be sure that the factor levels are all the same
+    if(! isTRUE(all.equal(levels(ego_df$.agecat),
+                          levels(alter_df$.ego_agecat),
+                          levels(alter_df$.alter_agecat),
+                          levels(age_margins$.agecat)))) {
+      
+        stop('Levels for the age variable need to be the same in ego_df, alter_df, and age_margins\n.')
+    }
+  }
+  
+  
+  ## get the denominator -- ie, the weighted number of interviews in each age group
+  ## (need to do this separately b/c people who report 0 contacts in a given age group still
+  ##  should be in the denominator when calculating avg number of connections to that age gp)
+  mix_denom <- ego_df %>%
+    # assumed to have a variable called '.weight'
+    # (created in the wmap above)
+    select(.ego_age = .agecat, .weight) %>%
+    group_by(.ego_age) %>%
+    ## num_interviews is the number of survey respondents in age group .ego_age
+    ## weighted_num_interviews is the weighted number of survey respondents in age group .ego_age
+    summarize(num_interviews = n(),
+              weighted_num_interviews = sum(.weight),
+              .groups='drop_last')
+  
+  unadj_contact_mat <- alter_df %>%
+     select(.ego_age=.ego_agecat, 
+            .alter_age=.alter_agecat, 
+            .alter_weight, 
+            .ego_weight) %>%
+     group_by(.ego_age, .alter_age, .drop=FALSE) %>%
+     # weighted_n_contacts is the weighted total number of reported contacts by respondents 
+     #                     in ego_age to contacts in alter_age
+     #      raw_n_contacts is the unweighted count of reported contacts by respondents
+     #                     in ego_age to contacts in alter_age
+     summarize(weighted_n_contacts = sum(.alter_weight*.ego_weight),
+               raw_n_contacts = n(),
+               .groups='drop_last') %>%
+     # join on the denominator, ie, the number of interviews and weighted number of interviews
+     # in ego_age
+     left_join(mix_denom, by='.ego_age') %>%
+     # join on the ego agegp size and alter agegp size in the population (from the ACS)
+     left_join(age_margins %>% 
+                 select(.ego_age = .agecat, 
+                        ego_acs_N = acs_tot), 
+               by='.ego_age') %>%
+     left_join(age_margins %>% 
+                 select(.alter_age = .agecat, 
+                        alter_acs_N = acs_tot), 
+               by='.alter_age') %>%
+     # divide the populations by a million to keep the arithmetic from overflowing
+     # (this will not affect the adjustment, as long as we divide ego_acs_N and alter_acs_N by
+     #  the same thing)
+     mutate(ego_acs_N = ego_acs_N / 1e6,
+            alter_acs_N = alter_acs_N / 1e6)  %>%
+     # unadj_avg_per_ego is the average number of contacts in age group alter_age
+     # reported by respondents in ego_age, with the symmetry constraint not enforced
+     mutate(unadj_avg_per_ego = weighted_n_contacts / weighted_num_interviews) %>%
+     mutate(unadj_avg_per_ego = case_when(# if ego_acs_N is missing, this age group was not interviewed
+                                          is.na(ego_acs_N) ~ NA_real_,
+                                          # otherwise, this bootstrap resample may have happened not to resample
+                                          # people in this age group - so the estimated number of contacts is 0
+                                          is.na(weighted_num_interviews) ~ 0, 
+                                          TRUE ~ unadj_avg_per_ego))
+  
+     # calculate the adjusted matrix, with symemtrization enforced
+     # this symmetrization means that the matrix implies that
+     #  n_e * avg_e,a = n_a * avg_a,e
+     # where n_e is population total in ego age group
+     #       n_a is population total in alter age group
+     #       avg_e,a is avg number of connections to someone in a among people in e
+     #       avg_a,e is avg number of connections to someone in e among people in a
+     sym_contact_mat <- unadj_contact_mat %>%
+       left_join( unadj_contact_mat %>% select(.alter_age = .ego_age, 
+                                               .ego_age = .alter_age, 
+                                               other_unadj_avg_per_ego = unadj_avg_per_ego,
+                                               other_num_interviews = num_interviews,
+                                               other_weighted_num_interviews = weighted_num_interviews),
+                  by=c('.ego_age', '.alter_age')) %>%
+       #mutate(sym_avg_per_ego = case_when(is.na(alter_acs_N) ~ unadj_avg_per_ego,
+       mutate(sym_avg_per_ego = case_when(# if ego_acs_N is missing, this age group was not interviewed
+                                          is.na(ego_acs_N) ~ NA_real_,
+                                          # if alter_acs_N is missing, then the alter's age group 
+                                          # was not interviewed (so no symmetrization is necessary)
+                                          is.na(alter_acs_N) ~ unadj_avg_per_ego,
+                                          TRUE ~ (1 / (2*ego_acs_N)) * 
+                                                 ((unadj_avg_per_ego*ego_acs_N) + 
+                                                  (other_unadj_avg_per_ego*alter_acs_N))))
+     
+     return(sym_contact_mat)
+}
+```
+
+
+Plot to summarize mean/variance relationship for a set of bootstrap resamples
+
+```{r fn-cm-plots}
+cm_plots <- function(cm, cm_boot, coarse_age=TRUE) {
+  
+  cm_stacked <- imap_dfr(cm_boot,
+                       ~ .x %>% mutate(boot_idx = .y))
+  
+  cm_heatmap <- cm %>%
+    # if the symmetrized entry is 0, it means nobody reported a connection in this cell;
+    # for this plot, we'll make these render these differently by changing them to NA
+    mutate(sym_avg_per_ego = ifelse(sym_avg_per_ego == 0, NA, sym_avg_per_ego)) %>%
+    ggplot(.) +
+    geom_tile(aes(x=.ego_age, 
+                  y=.alter_age, 
+                  fill=sym_avg_per_ego)) +
+    coord_equal() +
+    #scale_fill_gradient(low = "black", high = "red", na.value = NA) +
+    #scale_fill_gradientn(colours = terrain.colors(10)) +
+    NULL
+  
+  cm_stacked_summ <- cm_stacked %>%
+    group_by(.ego_age, .alter_age) %>%
+    summarize(mean_ape = mean(sym_avg_per_ego, na.rm=TRUE),
+              sd_ape = sd(sym_avg_per_ego, na.rm=TRUE),
+              .groups='drop_last') 
+  
+  if(coarse_age) {
+   cm_hists <- cm_stacked %>%
+    mutate(alter_age = fct_rev(.alter_age)) %>%
+    ggplot(.) +
+    geom_histogram(aes(x=sym_avg_per_ego)) +
+    geom_vline(aes(xintercept=sym_avg_per_ego), color='red', data=cm) +
+    facet_grid(.alter_age ~ .ego_age) +
+    theme_minimal() 
+  } else {
+    cm_hists <- NULL
+  }
+  
+  if(coarse_age) {
+  
+    res_plot <- cm_stacked_summ %>%
+      ggplot(.) +
+      geom_point(aes(x=mean_ape, 
+                     y=sd_ape, 
+                     #NULL)) + 
+                     shape=.alter_age,
+                     color=.ego_age)) +
+                     #color=mean_weighted_n)) +
+                     #color=raw_n)) +
+                     #color=ego_acs_N)) +
+      theme_minimal() +
+      xlab(str_wrap('Estimated average number of contacts per ego', width=45)) +
+      ylab(str_wrap('Estimated standard error in estimate for average number of contacts per ego', width=45))
+  
+  } else {
+    
+    res_plot <- cm_stacked_summ %>%
+      ggplot(.) +
+      geom_point(aes(x=mean_ape, 
+                     y=sd_ape)) +
+      theme_minimal() +
+      xlab(str_wrap('Estimated average number of contacts per ego', width=45)) +
+      ylab(str_wrap('Estimated standard error in estimate for average number of contacts per ego', width=45))
+  }
+  
+  return(list(heatmap=cm_heatmap, meanvar=res_plot, hists=cm_hists))
+  
+}
+```
+
+
+## Contact matrices for wave 0
+
+First, grab the vars we need from the data and join on the bootstrap weights for
+this wave. (The vars we need from the data are the age categories of the respondent and each contact.)
+Do this for the respondent data and for the contact data.
+
+```{r w0-prep}
+dfw0wgt_mat <- dfw0_bootwgt %>% 
+  left_join(dfw0 %>% 
+              select(rid, agecat_w0), by='rid') %>%
+  group_split(boot_idx)
+
+dfw0wgt_alters_mat <- dfw0_alters_bootwgt %>% 
+  left_join(dfw0_alters %>% 
+              select(rid, alter_num, 
+                     ego_agecat_w0, alter_agecat_w0)) %>%
+  group_split(boot_idx)
+```
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w0-cm}
+tic("calculating contact matrices - wave 0 age categories")
+cm_w0_w0age <- calculate_contact_matrix(ego_df = dfw0,
+                                        alter_df = dfw0_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w0_w0age_boot <- map(1:length(dfw0wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw0wgt_mat[[.x]],
+                                      alter_df = dfw0wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight'))
+toc()
+
+tic("saving contact matrices - wave 0 age categories")
+saveRDS(cm_w0_w0age, file=file.path(out.dir, 'wave0_contact_matrix_w0age.rds'))
+saveRDS(cm_w0_w0age_boot, file=file.path(out.dir, 'wave0_contact_matrices_w0age_bootstrapped.rds'))
+toc()
+
+#cm_w0_w0age <- readRDS(file=file.path(out.dir, 'wave0_contact_matrix_w0age.rds'))
+#cm_w0_w0age_boot <- readRDS(file=file.path(out.dir, 'wave0_contact_matrices_w0age_bootstrapped.rds'))
+```
+
+```{r w0-plot}
+tic("plotting contact matrices - wave 0 age categories")
+cm_plots(cm_w0_w0age, cm_w0_w0age_boot)
+toc()
+```
+
+## Contact matrices for wave 1
+
+First, grab the vars we need from the data and join on the bootstrap weights for
+this wave. (The vars we need from the data are the age categories of the respondent and each contact.)
+Do this for the respondent data and for the contact data.
+
+```{r w1-prep}
+dfw1wgt_mat <- dfw1_bootwgt %>% 
+  left_join(dfw1 %>% 
+              select(rid, agecat, agecat_w0), by='rid') %>%
+  group_split(boot_idx)
+
+dfw1wgt_alters_mat <- dfw1_alters_bootwgt %>% 
+  left_join(dfw1_alters %>% 
+              select(rid, alter_num, alter_weight_onlycc, alter_weight_nomask,
+                     ego_agecat, alter_agecat,
+                     ego_agecat_w0, alter_agecat_w0)) %>%
+  group_split(boot_idx)
+```
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w1-w0age}
+tic("calculating contact matrices - wave 1")
+cm_w1_w0age <- calculate_contact_matrix(ego_df = dfw1,
+                                        alter_df = dfw1_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w1_w0age_boot <- map(1:length(dfw1wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw1wgt_mat[[.x]],
+                                      alter_df = dfw1wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight'))
+toc()
+
+tic("saving contact matrices - wave 0 age categories")
+saveRDS(cm_w1_w0age, file=file.path(out.dir, 'wave1_contact_matrix_w0age.rds'))
+saveRDS(cm_w1_w0age_boot, file=file.path(out.dir, 'wave1_contact_matrices_w0age_bootstrapped.rds'))
+toc()
+```
+
+```{r w1-w0age-plot}
+tic("plotting contact matrices - wave 1")
+cm_plots(cm_w1_w0age, cm_w1_w0age_boot)
+toc()
+```
+
+### Contact matrices wave 1 WITHOUT only-physical contacts (so, ONLY conversational contacts)
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w1-w0age-onlycc}
+tic("calculating contact matrices - wave 0 age categories, only cc")
+cm_w1_w0age_onlycc <- calculate_contact_matrix(ego_df = dfw1,
+                                        alter_df = dfw1_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_onlycc')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w1_w0age_onlycc_boot <- map(1:length(dfw1wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw1wgt_mat[[.x]],
+                                      alter_df = dfw1wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_onlycc'))
+toc()
+
+tic("saving contact matrices - wave 0 age categories, only cc")
+saveRDS(cm_w1_w0age_onlycc, file=file.path(out.dir, 'wave1_contact_matrix_w0age_onlycc.rds'))
+saveRDS(cm_w1_w0age_onlycc_boot, file=file.path(out.dir, 'wave1_contact_matrices_w0age_onlycc_bootstrapped.rds'))
+toc()
+```
+
+
+```{r w1-w0age-onlycc-plot}
+tic("plotting contact matrices - wave 0 age categories, ONLY cc")
+cm_plots(cm_w1_w0age_onlycc, cm_w1_w0age_onlycc_boot)
+toc()
+```
+
+Quick comparison with all vs only conversational contacts
+
+```{r}
+comp_all_vs_onlycc <- cm_w1_w0age %>%
+  group_by(.ego_age) %>%
+  summarize(avg_degree = sum(sym_avg_per_ego)) %>%
+  left_join(
+    cm_w1_w0age_onlycc %>%
+      group_by(.ego_age) %>%
+      summarize(avg_degree_onlycc = sum(sym_avg_per_ego)),
+    by='.ego_age'
+  )
+comp_all_vs_onlycc
+```
+### Contact matrices wave 1 WITHOUT masked contacts (so, ONLY non-mask contacts)
+
+
+```{r w1-w0age-nomask}
+tic("calculating contact matrices - wave 1, no mask")
+cm_w1_w0age_nomask <- calculate_contact_matrix(ego_df = dfw1,
+                                        alter_df = dfw1_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_nomask')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w1_w0age_nomask_boot <- map(1:length(dfw1wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw1wgt_mat[[.x]],
+                                      alter_df = dfw1wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_nomask'))
+toc()
+
+tic("saving contact matrices - wave 1, no mask")
+saveRDS(cm_w1_w0age_nomask, file=file.path(out.dir, 'wave1_contact_matrix_w0age_nomask.rds'))
+saveRDS(cm_w1_w0age_nomask_boot, file=file.path(out.dir, 'wave1_contact_matrices_w0age_nomask_bootstrapped.rds'))
+toc()
+```
+
+
+```{r w1-w0age-nomask-plot}
+tic("plotting contact matrices - wave 1, no mask")
+cm_plots(cm_w1_w0age_nomask, cm_w1_w0age_nomask_boot)
+toc()
+```
+
+## Contact matrices for wave 2
+
+First, grab the vars we need from the data and join on the bootstrap weights for
+this wave. (The vars we need from the data are the age categories of the respondent and each contact.)
+Do this for the respondent data and for the contact data.
+
+```{r w2-prep}
+dfw2wgt_mat <- dfw2_bootwgt %>% 
+  left_join(dfw2 %>% 
+              select(rid, agecat, agecat_w0), by='rid') %>%
+  group_split(boot_idx)
+
+dfw2wgt_alters_mat <- dfw2_alters_bootwgt %>% 
+  left_join(dfw2_alters %>% 
+              select(rid, alter_num, alter_weight_onlycc, alter_weight_nomask,
+                     ego_agecat, alter_agecat,
+                     ego_agecat_w0, alter_agecat_w0)) %>%
+  group_split(boot_idx)
+```
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w2-w0age}
+tic("calculating contact matrices - wave 2")
+cm_w2_w0age <- calculate_contact_matrix(ego_df = dfw2,
+                                        alter_df = dfw2_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w2_w0age_boot <- map(1:length(dfw2wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw2wgt_mat[[.x]],
+                                      alter_df = dfw2wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight'))
+toc()
+
+tic("saving contact matrices - wave 2")
+saveRDS(cm_w2_w0age, file=file.path(out.dir, 'wave2_contact_matrix_w0age.rds'))
+saveRDS(cm_w2_w0age_boot, file=file.path(out.dir, 'wave2_contact_matrices_w0age_bootstrapped.rds'))
+toc()
+```
+
+```{r w2-w0age-plot}
+tic("plotting contact matrices - wave 2")
+cm_plots(cm_w2_w0age, cm_w2_w0age_boot)
+toc()
+```
+
+### Wave 2 - ONLY cc
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w2-w0age-onlycc}
+tic("calculating contact matrices - wave 2 only cc")
+cm_w2_w0age_onlycc <- calculate_contact_matrix(ego_df = dfw2,
+                                        alter_df = dfw2_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_onlycc')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w2_w0age_onlycc_boot <- map(1:length(dfw2wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw2wgt_mat[[.x]],
+                                      alter_df = dfw2wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_onlycc'))
+toc()
+
+tic("saving contact matrices - wave 2 only cc")
+saveRDS(cm_w2_w0age_onlycc, file=file.path(out.dir, 'wave2_contact_matrix_w0age_onlycc.rds'))
+saveRDS(cm_w2_w0age_onlycc_boot, file=file.path(out.dir, 'wave2_contact_matrices_w0age_onlycc_bootstrapped.rds'))
+toc()
+```
+
+```{r w2-w0age-onlycc-plot}
+tic("plotting contact matrices - wave 2 only cc")
+cm_plots(cm_w2_w0age_onlycc, cm_w2_w0age_onlycc_boot)
+toc()
+```
+
+Quick comparison with all vs only conversational contacts
+
+```{r}
+comp_all_vs_onlycc <- cm_w2_w0age %>%
+  group_by(.ego_age) %>%
+  summarize(avg_degree = sum(sym_avg_per_ego)) %>%
+  left_join(
+    cm_w2_w0age_onlycc %>%
+      group_by(.ego_age) %>%
+      summarize(avg_degree_onlycc = sum(sym_avg_per_ego)),
+    by='.ego_age'
+  )
+comp_all_vs_onlycc
+```
+
+### Contact matrices wave 2 WITHOUT masked contacts (so, ONLY non-mask contacts)
+
+```{r w2-w0age-nomask}
+tic("calculating contact matrices - wave 2, no mask")
+cm_w2_w0age_nomask <- calculate_contact_matrix(ego_df = dfw2,
+                                        alter_df = dfw2_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_nomask')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w2_w0age_nomask_boot <- map(1:length(dfw2wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw2wgt_mat[[.x]],
+                                      alter_df = dfw2wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_nomask'))
+toc()
+
+tic("saving contact matrices - wave 2, no mask")
+saveRDS(cm_w2_w0age_nomask, file=file.path(out.dir, 'wave2_contact_matrix_w0age_nomask.rds'))
+saveRDS(cm_w2_w0age_nomask_boot, file=file.path(out.dir, 'wave2_contact_matrices_w0age_nomask_bootstrapped.rds'))
+toc()
+```
+
+
+```{r w2-w0age-nomask-plot}
+tic("plotting contact matrices - wave 2, no mask")
+cm_plots(cm_w2_w0age_nomask, cm_w2_w0age_nomask_boot)
+toc()
+```
+
+
+## Contact matrices for wave 3
+
+First, grab the vars we need from the data and join on the bootstrap weights for
+this wave. (The vars we need from the data are the age categories of the respondent and each contact.)
+Do this for the respondent data and for the contact data.
+
+```{r w3-prep}
+dfw3wgt_mat <- dfw3_bootwgt %>% 
+  left_join(dfw3 %>% 
+              select(rid, agecat, agecat_w0), by='rid') %>%
+  group_split(boot_idx)
+
+dfw3wgt_alters_mat <- dfw3_alters_bootwgt %>% 
+  left_join(dfw3_alters %>% 
+              select(rid, alter_num, alter_weight_onlycc, alter_weight_nomask,
+                     ego_agecat, alter_agecat,
+                     ego_agecat_w0, alter_agecat_w0)) %>%
+  group_split(boot_idx)
+```
+
+(1k bootstraps takes about 3.5 mins)
+
+```{r w3-w0age}
+tic("calculating contact matrices - wave 3")
+cm_w3_w0age <- calculate_contact_matrix(ego_df = dfw3,
+                                        alter_df = dfw3_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w3_w0age_boot <- map(1:length(dfw3wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw3wgt_mat[[.x]],
+                                      alter_df = dfw3wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight'))
+toc()
+
+tic("saving contact matrices - wave 3")
+saveRDS(cm_w3_w0age, file=file.path(out.dir, 'wave3_contact_matrix_w0age.rds'))
+saveRDS(cm_w3_w0age_boot, file=file.path(out.dir, 'wave3_contact_matrices_w0age_bootstrapped.rds'))
+toc()
+```
+
+```{r w3-w0age-plot}
+tic("plotting contact matrices - wave 3")
+cm_plots(cm_w3_w0age, cm_w3_w0age_boot)
+toc()
+```
+
+### Wave 3 - ONLY cc
+
+(1k bootstraps takes about 2.5 mins)
+
+```{r w3-w0age-onlycc}
+tic("calculating contact matrices - wave 3 only cc")
+cm_w3_w0age_onlycc <- calculate_contact_matrix(ego_df = dfw3,
+                                        alter_df = dfw3_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_onlycc')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w3_w0age_onlycc_boot <- map(1:length(dfw3wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw3wgt_mat[[.x]],
+                                      alter_df = dfw3wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_onlycc'))
+toc()
+
+tic("saving contact matrices - wave 3 only cc")
+saveRDS(cm_w3_w0age_onlycc, file=file.path(out.dir, 'wave3_contact_matrix_w0age_onlycc.rds'))
+saveRDS(cm_w3_w0age_onlycc_boot, file=file.path(out.dir, 'wave3_contact_matrices_w0age_onlycc_bootstrapped.rds'))
+toc()
+```
+
+```{r w3-w0age-onlycc-plot}
+tic("plotting contact matrices - wave 3 only cc")
+cm_plots(cm_w3_w0age_onlycc, cm_w3_w0age_onlycc_boot)
+toc()
+```
+
+Quick comparison with all vs only conversational contacts
+
+```{r}
+comp_all_vs_onlycc <- cm_w3_w0age %>%
+  group_by(.ego_age) %>%
+  summarize(avg_degree = sum(sym_avg_per_ego)) %>%
+  left_join(
+    cm_w3_w0age_onlycc %>%
+      group_by(.ego_age) %>%
+      summarize(avg_degree_onlycc = sum(sym_avg_per_ego)),
+    by='.ego_age'
+  )
+comp_all_vs_onlycc
+```
+
+### Contact matrices wave 3 WITHOUT masked contacts (so, ONLY non-mask contacts)
+
+```{r w3-w0age-nomask}
+tic("calculating contact matrices - wave 3, no mask")
+cm_w3_w0age_nomask <- calculate_contact_matrix(ego_df = dfw3,
+                                        alter_df = dfw3_alters,
+                                        age_margins = acs18_agecat_w0_margins,
+                                        agevar='agecat_w0',
+                                        weightvar = 'weight_pooled',
+                                        alter_weightvar = 'alter_weight_nomask')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_w3_w0age_nomask_boot <- map(1:length(dfw3wgt_mat),
+           ~ calculate_contact_matrix(ego_df = dfw3wgt_mat[[.x]],
+                                      alter_df = dfw3wgt_alters_mat[[.x]],
+                                      age_margins = acs18_agecat_w0_margins,
+                                      agevar='agecat_w0',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight_nomask'))
+toc()
+
+tic("saving contact matrices - wave 3, no mask")
+saveRDS(cm_w3_w0age_nomask, file=file.path(out.dir, 'wave3_contact_matrix_w0age_nomask.rds'))
+saveRDS(cm_w3_w0age_nomask_boot, file=file.path(out.dir, 'wave3_contact_matrices_w0age_nomask_bootstrapped.rds'))
+toc()
+```
+
+
+```{r w3-w0age-nomask-plot}
+tic("plotting contact matrices - wave 3, no mask")
+cm_plots(cm_w3_w0age_nomask, cm_w3_w0age_nomask_boot)
+toc()
+```
+
+## FB 2015 survey
+
+```{r fb-prep}
+fbwgt_mat <- fb_bootwgt$respondent %>% 
+  left_join(fb2015 %>% 
+              select(rid, agecat_fb), by='rid') %>%
+  group_split(boot_idx)
+
+fbwgt_alters_mat <- fb_bootwgt$contacts %>% 
+  left_join(fb2015_alters %>% 
+              select(rid, alter_num, ego_agecat_fb, alter_agecat_fb), 
+            by=c('rid', 'alter_num'))
+
+cat(glue::glue("rows for contacts before join: {contact_pre}; after join: {contact_post}",
+               contact_pre = nrow(fb_bootwgt$contacts),
+               contact_post = nrow(fbwgt_alters_mat)))
+
+stopifnot(nrow(fb_bootwgt$contacts) == nrow(fbwgt_alters_mat))
+
+fbwgt_alters_mat <- fbwgt_alters_mat %>%
+  group_split(boot_idx)
+```
+
+```{r fb-cm}
+tic("calculating contact matrices - fb age categories")
+cm_fb <- calculate_contact_matrix(ego_df = fb2015,
+                                  alter_df = fb2015_alters,
+                                  age_margins = acs15_fb_margins,
+                                  agevar='agecat_fb',
+                                  weightvar = 'weight',
+                                  alter_weightvar = 'alter_weight')
+
+# 100 boot reps takes ~7 seconds, 700kb
+# 1000 boot reps takes ~1 minute, 7MB
+cm_fb_boot <- map(1:length(fbwgt_mat),
+           ~ calculate_contact_matrix(ego_df = fbwgt_mat[[.x]],
+                                      alter_df = fbwgt_alters_mat[[.x]],
+                                      age_margins = acs15_fb_margins,
+                                      agevar='agecat_fb',
+                                      weightvar = 'boot_weight',
+                                      alter_weightvar = 'alter_weight'))
+toc()
+
+tic("saving contact matrices - fb age categories")
+saveRDS(cm_fb, file=file.path(out.dir, 'fb_contact_matrix_fbage.rds'))
+saveRDS(cm_fb_boot, file=file.path(out.dir, 'fb_contact_matrices_fbage_bootstrapped.rds'))
+toc()
+```
+
+```{r fb-plot}
+tic("plotting contact matrices -fb age categories")
+cm_plots(cm_fb, cm_fb_boot)
+toc()
+```
+```{r}
+toc()
+```
+
+

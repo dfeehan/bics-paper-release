@@ -1,0 +1,261 @@
+---
+title: "Sensitivity analysis - Estimate the reproduction number with higher and lower average baseline R0"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(socialmixr)
+library(dplyr)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(cowplot)
+library(reshape2)
+library(ipumsr)
+library(grid)
+library(extrafont)
+
+# load some functions
+source(here('bics-paper-code', 'code', 'utils.R'))
+
+out.dir <- here('bics-paper-code', 'out')
+
+
+```
+
+Load all data
+```{r}
+## survey data
+# set polymod parameters for fetching data
+polymod_country = "United Kingdom"
+polymod_age_limits = c(0, 18, 25, 35, 45,  65)
+
+# polymod
+polymod_mat <- getPolymodMatrix(polymod_country = polymod_country,
+                                polymod_age_limits= polymod_age_limits)
+
+polymod_mat_fb_age <- getPolymodMatrix(polymod_country = polymod_country,
+                                polymod_age_limits= c(0, 15, 25, 35, 45,  65))
+
+
+# polymod without school contacts
+polymod_no_school_mat <- getPolymodMatrixNoSchool(polymod_country = polymod_country,
+                                                  polymod_age_limits= polymod_age_limits)
+
+
+# grab age distns with kids included for making contact matrix symmetric
+acs18_agecat_withkids_targets <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs18_wave1_agecat_withkids.rds'))
+
+# grab 2015 acs data for the FB matrix
+acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
+acs15_agecat_fb <- acs15 %>%
+  mutate(agecat = case_when(
+    AGE %in%  0:15  ~ '[0,15)',
+    AGE %in% 15:24 ~ '[15,25)',
+    AGE %in% 25:34 ~ '[25,35)',
+    AGE %in% 35:44 ~ '[35,45)',
+    AGE %in% 45:64 ~ '[45,65)',
+    AGE >= 65      ~ '[65,100]')
+  ) %>%
+  select(agecat, PERWT) %>%
+  group_by(agecat) %>%
+  summarize(acs_tot = sum(PERWT))
+
+## wave 3 data 
+wave3 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave3_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+## wave 2 data 
+wave2 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave2_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+## wave 1 data
+wave1 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave1_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") 
+
+## wave 0 data
+wave0 <- readRDS(here('bics-paper-code', 'data', 'contact-matrices', "wave0_contact_matrix_w0age.rds")) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+## create a list object with the data from each wave
+wave_df_list <- list(wave0, wave1, wave2, wave3)
+num_waves <-length(wave_df_list)
+
+## 2015 facebook study
+fb <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'fb_contact_matrix_fbage.rds')) %>%
+  rename(ego_age = .ego_age, alter_age = .alter_age)  %>%
+  filter(ego_age != "[0,15)") 
+```
+
+
+Adjust for reciprocity and infer within group contacts for youngest age group
+
+```{r}
+# BICS
+filled_matrix_BICS <- survey_mat_youngest_added_BICS <- list()
+for (n in 1:num_waves) {
+  filled_matrix_BICS[[n]] <- fill_matrix_BICS(df = wave_df_list[[n]], 
+                                              age_df = acs18_agecat_withkids_targets,
+                                              fill_mat = polymod_no_school_mat)
+  survey_mat_youngest_added_BICS[[n]] <- filled_matrix_BICS[[n]]$survey_mat_youngest_added
+}
+
+# 2015 FB study (baseline)
+filled_matrix_fb <- fill_matrix_FB(df = fb, 
+                                     age_df = acs15_agecat_fb,
+                                     fill_mat = polymod_mat_fb_age) # fill FB matrix assuming kids are going to school (i.e. business as usual)
+survey_mat_youngest_added_fb<- filled_matrix_fb$survey_mat_youngest_added
+
+
+```
+
+Relative ratios of eigenvalues 
+
+```{r}
+#BICS compared to polymod
+ratio_BICS_polymod <- list()
+for (n in 1:num_waves){
+  ratio_BICS_polymod[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = polymod_mat)
+}
+
+#BICS compared to 2015 FB study
+ratio_BICS_fb <- list()
+for (n in 1:num_waves){
+  ratio_BICS_fb[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = survey_mat_youngest_added_fb)
+}
+
+```
+
+Load bootstrap data and calculate \(R_0\) and confidence intervals
+
+```{r}
+
+sum_sym_avg_fb_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_fb_bootstrapped.rds'))
+sum_sym_avg_BICS_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_BICS_bootstrapped.rds'))
+
+ratio_bootstrapped_fb_baseline <- readRDS(file.path(out.dir, 'ratio_bootstrapped_fb_baseline.rds'))
+
+
+baseline_R0_high = 5.17; baseline_R0_low = 1.92 
+baseline_R0_SE = 0.54
+num_replicates <- nrow(ratio_bootstrapped_fb_baseline)
+
+baseline_R0_bootstrapped_high <- readRDS(file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped_high.rds'))
+
+baseline_R0_bootstrapped_low <- readRDS(file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped_low.rds'))
+
+R0_bootstrapped_fb_baseline_high <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+R0_bootstrapped_fb_baseline_low <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+
+for (i in 1:num_replicates) {
+  
+  # draw baseline R0 value
+  baselineR0_high_tmp <- baseline_R0_bootstrapped_high[[i]]  
+  baselineR0_low_tmp <- baseline_R0_bootstrapped_low[[i]]  
+
+  
+  for (n in 1:num_waves) {
+    R0_bootstrapped_fb_baseline_high[i,n] <- ratio_bootstrapped_fb_baseline[i,n]*baselineR0_high_tmp
+    R0_bootstrapped_fb_baseline_low[i,n] <- ratio_bootstrapped_fb_baseline[i,n]*baselineR0_low_tmp
+
+  }
+}
+
+```
+
+
+\(R_0\) estimate and 95% confidence intervals
+
+```{r}
+
+#fb baseline: R0 est + ci
+R0_est_fb_baseline_high <- lapply(ratio_BICS_fb, function(x) x*baseline_R0_high)
+R0_est_fb_baseline_low <- lapply(ratio_BICS_fb, function(x) x*baseline_R0_low)
+
+ci_R0_est_fb_baseline_high <- ci_R0_est_fb_baseline_low <- list()
+for (n in 1:num_waves) {
+  ci_R0_est_fb_baseline_high[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_fb_baseline_high[,n])
+    ci_R0_est_fb_baseline_low[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_fb_baseline_low[,n])
+}
+
+
+```
+
+
+Plot \(R_0\) estimates
+
+
+```{r}
+plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "High baseline", 
+                                     r0 = baseline_R0_high, 
+                                     ci_low = baseline_R0_high - 1.96*baseline_R0_SE, 
+                                     ci_high = baseline_R0_high + 1.96*baseline_R0_SE)) %>%
+  rbind(cbind(type = "Baseline", comparison = "Low baseline", 
+                                     r0 = baseline_R0_low, 
+                                     ci_low = baseline_R0_low - 1.96*baseline_R0_SE, 
+                                     ci_high = baseline_R0_low + 1.96*baseline_R0_SE)) %>%
+  rbind(cbind(type = "Wave 0", comparison = "High baseline",
+              r0 = R0_est_fb_baseline_high[[1]], 
+              ci_low = ci_R0_est_fb_baseline_high[[1]][1], 
+              ci_high = ci_R0_est_fb_baseline_high[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "High baseline",
+              r0 = R0_est_fb_baseline_high[[2]], 
+              ci_low = ci_R0_est_fb_baseline_high[[2]][1], 
+              ci_high = ci_R0_est_fb_baseline_high[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "High baseline",
+              r0 = R0_est_fb_baseline_high[[3]], 
+              ci_low = ci_R0_est_fb_baseline_high[[3]][1], 
+              ci_high = ci_R0_est_fb_baseline_high[[3]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "High baseline",
+              r0 = R0_est_fb_baseline_high[[4]], 
+              ci_low = ci_R0_est_fb_baseline_high[[4]][1], 
+              ci_high = ci_R0_est_fb_baseline_high[[4]][2])) %>%
+  rbind(cbind(type = "Wave 0", comparison = "Low baseline",
+              r0 = R0_est_fb_baseline_low[[1]], 
+              ci_low = ci_R0_est_fb_baseline_low[[1]][1], 
+              ci_high = ci_R0_est_fb_baseline_low[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "Low baseline",
+              r0 = R0_est_fb_baseline_low[[2]], 
+              ci_low = ci_R0_est_fb_baseline_low[[2]][1], 
+              ci_high = ci_R0_est_fb_baseline_low[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "Low baseline",
+              r0 = R0_est_fb_baseline_low[[3]], 
+              ci_low = ci_R0_est_fb_baseline_low[[3]][1], 
+              ci_high = ci_R0_est_fb_baseline_low[[3]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "Low baseline",
+              r0 = R0_est_fb_baseline_low[[4]], 
+              ci_low = ci_R0_est_fb_baseline_low[[4]][1], 
+              ci_high = ci_R0_est_fb_baseline_low[[4]][2])) %>%
+  mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
+
+R0plot <- plot_df_r0_ci %>% 
+  ggplot(aes(x=type, y = r0, group = comparison, color = comparison)) +
+  scale_color_manual(name = "Relative to", values = c("dark orange", "dark red")) +
+  geom_errorbar(width=.1, aes(ymin=ci_low, ymax=ci_high), position=position_dodge(width=0.5)) +
+  geom_point(shape=19, size=3, fill="white", position=position_dodge(width=0.5)) +
+  geom_hline(yintercept = 1, col = "black", linetype = "dotted")+
+  labs(y = expression(R[0]~estimate), x = "")+
+  theme_classic(base_size = 8) +
+  theme(legend.position="bottom")
+
+ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure_high_low_baseline.png"), width = 6, height = 4)
+ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure_high_low_baseline.pdf"), width = 6, height = 4)
+
+R0plot
+
+
+```

@@ -1,0 +1,193 @@
+---
+title: "Make a table with the avg weighted number of contacts"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(glue)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(tictoc)
+
+library(patchwork)
+
+tic("Running file: ")
+```
+
+Note that the bootstrap directory here should be changed if the bootstraps change
+
+```{r}
+## survey data
+df <-             readRDS(file=here('bics-paper-code', 'data', 'df_all_waves.rds'))
+df_alters <-      readRDS(file=here('bics-paper-code', 'data', 'df_alters_all_waves.rds'))
+## bootstrap resamples
+df_boot <-        readRDS(file=here('bics-paper-code', 'data', 'df_boot_all_waves.rds'))
+df_boot_alters <- readRDS(file=here('bics-paper-code', 'data', 'df_alters_boot_all_waves.rds'))
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+```
+
+TODO - need to calculate avg num contacts + non-hh contacts (so, using alters)
+by the different groups in Table 2
+
+## Avg number of contacts - bootstrapped
+
+```{r}
+tic("Calculating weighted num interviews per bootstrap rep")
+wgt_num_int_boot <- df_boot %>%
+  mutate(wave = factor(wave)) %>%
+  group_by(wave, boot_idx) %>%
+  summarize(wave_wgt_tot = sum(boot_weight))
+toc()
+```
+
+```{r}
+covars <- c(
+            'urbanrural', 
+            'agecat_w0', 
+            'race_ethnicity', 
+            'weekday', 
+            'educ',
+            'gender', 
+            'w_hhsize')
+
+df_recoded_cc <- df %>%
+  mutate(weekday = case_when(reference_weekday ~ 'Weekday',
+                             TRUE ~ 'Weekend')) %>%
+  mutate(male = case_when(gender == 'Female' ~ 'Female',
+                          TRUE ~ 'Male')) %>%
+  mutate(urbanrural = fct_explicit_na(urbanrural, na_level="(Unknown)")) %>%
+  mutate(educ = case_when(
+                          educ == "College graduate"         ~ "College graduate",
+                          educ == "Some college"             ~ "College, non-graduate",
+                          educ == "High school graduate"     ~ "HS graduate",
+                          educ == "Non-high school graduate" ~ "HS, non-graduate",
+                          TRUE ~ "(Unknown)")) %>%
+  # combined race/ethnicity category
+  mutate(race_ethnicity = case_when(is.na(hispanic) ~ '(Unknown)',
+                             hispanic == 1 ~ 'Hispanic',
+                             ethnicity == 'Black' ~ 'Black, non-Hispanic',
+                             ethnicity == 'White' ~ 'White, non-Hispanic',
+                             ethnicity == 'Other' ~ 'Other, non-Hispanic'
+                             ),
+         race_ethnicity = fct_relevel(race_ethnicity,
+                                      "White, non-Hispanic"))
+
+tic("Joining ego traits onto bootstrap reps")
+df_recoded_cc_withboot <- df_boot %>%
+  #filter(boot_idx %in% 1:5) %>%
+  left_join(df_recoded_cc %>% select(rid, 
+                                     num_cc, num_cc_nonhh, 
+                                     weight_pooled,
+                                     !!!covars))
+toc()
+
+tab_nice <- function(x) {
+  return(format(round(x, 1), nsmall=1))
+}
+
+text_est_ci <- function(a, b, c, fmtfn=tab_nice) {
+  glue::glue("{fmtfn(a)} ({fmtfn(b)}, {fmtfn(c)})")
+}
+
+tic("Calculating summaries")
+df_cc_withci <- map_dfr(covars,
+                    function(covar) {
+                        weighted_mean <- function(x, w) {
+                                           nonmiss <- which(! is.na(x))
+                                           return(sum(x[nonmiss]*w[nonmiss])/sum(w[nonmiss]))
+                                         }  
+
+                        cc_by_covar <- df_recoded_cc_withboot %>% 
+                          group_by_at(vars(one_of(covar), boot_idx, wave)) %>% 
+                          summarize(avg_num_cc_unweighted = weighted_mean(num_cc, rep(1, n())),
+                                    avg_num_cc_weighted = weighted_mean(num_cc, weight_pooled),
+                                    avg_num_cc_nonhh_unweighted = weighted_mean(num_cc_nonhh, rep(1, n())),
+                                    avg_num_cc_nonhh_weighted = weighted_mean(num_cc_nonhh, weight_pooled),
+                                    .groups = 'drop') %>%
+                          mutate(variable = !!covar) %>%
+                          rename(level = !!covar) %>%
+                          mutate(level = paste(level)) %>%
+                          group_by(variable, level, wave) %>% 
+                          summarize(
+                                    ci_low_num_cc_unweighted = quantile(avg_num_cc_unweighted, .025),
+                                    ci_high_num_cc_unweighted = quantile(avg_num_cc_unweighted, .975),
+                                    se_num_cc_unweighted = sd(avg_num_cc_unweighted),
+                                    avg_num_cc_unweighted = mean(avg_num_cc_unweighted),
+                                    
+                                    ci_low_num_cc_weighted = quantile(avg_num_cc_weighted, .025),
+                                    ci_high_num_cc_weighted = quantile(avg_num_cc_weighted, .975),
+                                    se_num_cc_weighted = sd(avg_num_cc_weighted),
+                                    avg_num_cc_weighted = mean(avg_num_cc_weighted),
+                                    
+                                    ci_low_num_cc_nonhh_unweighted = quantile(avg_num_cc_nonhh_unweighted, .025),
+                                    ci_high_num_cc_nonhh_unweighted = quantile(avg_num_cc_nonhh_unweighted, .975),
+                                    se_num_cc_nonhh_unweighted = sd(avg_num_cc_nonhh_unweighted),
+                                    avg_num_cc_nonhh_unweighted = mean(avg_num_cc_nonhh_unweighted),
+                                    
+                                    ci_low_num_cc_nonhh_weighted = quantile(avg_num_cc_nonhh_weighted, .025),
+                                    ci_high_num_cc_nonhh_weighted = quantile(avg_num_cc_nonhh_weighted, .975),
+                                    se_num_cc_nonhh_weighted = sd(avg_num_cc_nonhh_weighted),
+                                    avg_num_cc_nonhh_weighted = mean(avg_num_cc_nonhh_weighted),
+                                    
+                                    .groups = 'drop') %>%
+                        # add text summaries for table
+                        # {mean} ({ci_low}, {ci_high})
+                        mutate(
+                               text_num_cc_unweighted = text_est_ci(avg_num_cc_unweighted,
+                                                                    ci_low_num_cc_unweighted,
+                                                                    ci_high_num_cc_unweighted),
+                               text_num_cc_weighted   = text_est_ci(avg_num_cc_weighted,
+                                                                    ci_low_num_cc_weighted,
+                                                                    ci_high_num_cc_weighted),
+                               text_num_cc_nonhh_weighted   = text_est_ci(avg_num_cc_nonhh_weighted,
+                                                                          ci_low_num_cc_nonhh_weighted,
+                                                                          ci_high_num_cc_nonhh_weighted),
+                               text_num_cc_nonhh_unweighted   = text_est_ci(avg_num_cc_nonhh_unweighted,
+                                                                            ci_low_num_cc_nonhh_unweighted,
+                                                                            ci_high_num_cc_nonhh_unweighted)
+                               ) 
+                        
+                        return(cc_by_covar)
+                          
+                    }) %>%
+  pivot_wider(names_from=wave,
+              values_from=starts_with(c("avg_num_cc", "se", 
+                                        "ci_low", "ci_high",
+                                        "text")))
+toc()
+```
+
+
+```{r}
+saveRDS(df_cc_withci, file.path(out.dir, 'table_avgcc_withci.rds'))
+```
+
+
+```{r}
+toc()
+```
+

@@ -1,0 +1,241 @@
+---
+title: "Plot estimated coefficients for the two models"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+
+library(flexdashboard)
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(broom)
+library(broom.mixed)
+library(brms)
+library(tidybayes)
+library(tictoc)
+
+library(gt)
+library(gtsummary)
+
+library(patchwork)
+
+#theme_set(theme_tufte())
+#theme_set(theme_fivethirtyeight())
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+
+source(here('bics-paper-code', 'code', 'model-coef-plot-helpers.R'))
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+
+sex_fill  <- scale_fill_brewer(name='Gender',  palette='Set1')
+sex_color <- scale_color_brewer(name='Gender', palette='Set1')
+#sex_fill  <- scale_fill_viridis_d(name='Gender',  option='inferno')
+#sex_color <- scale_color_viridis_d(name='Gender', option='inferno')
+
+qty_fill  <- scale_fill_viridis_d(name='Quantity')
+qty_color <- scale_color_viridis_d(name='Quantity')
+```
+
+## Compare coefficients from pooled data fits 
+
+Grab model objects
+
+```{r}
+model_names <- c(
+  'allcc_nb_censored_loaded_weighted',
+  'nonhhcc_nb_censored_loaded_weighted'
+)
+
+models <- setNames(map(model_names,
+                       function(mn) {
+                         cur.out.dir <- here('bics-paper-code', 'out', mn)
+                         mod.obj <- readRDS(file.path(cur.out.dir, paste0(mn, '.rds')))
+                         return(mod.obj)
+                       }),
+                   model_names)
+```
+
+Covariate values to use for effect plots
+
+```{r}
+cur_conditions <- data.frame(wave=2,
+                             agecat_w0="[35,45)",
+                             gender = "Female",
+                             weight_pooled = 1,
+                             city = 'National',
+                             w_hhsize = '2',
+                             reference_weekday = 'Weekday',
+                             ## TODO - eventually set weekday, weight, and hhsize?
+                             race_ethnicity="White, non-Hispanic")
+```
+
+Plots from model predicting non-household contacts
+
+```{r nonhh_coefs_plot, fig.height=5, fig.width=8}
+fig.width <- 14 
+fig.height <- 7 
+
+## NB: heavy lifting is done in model-coef-plot-helpers.R
+plots_nonhh <- plot_preds(models[[2]],
+                          str_wrap("Predicted number of non-household contacts",30),
+                          cur_conditions)
+
+comb_nonhh_coef_plot <- plots_nonhh$comb
+
+ggsave(file.path(out.dir, 'model_nonhh_covar_preds.png'),
+       width=fig.width, height=fig.height,
+       comb_nonhh_coef_plot)
+ggsave(file.path(out.dir, 'model_nonhh_covar_preds.pdf'),
+       width=fig.width, height=fig.height,
+       comb_nonhh_coef_plot)
+
+comb_nonhh_coef_plot
+```
+
+Plots from model predicting all contacts
+
+
+```{r all_coefs_plot, fig.height=5, fig.width=8}
+fig.width <- 14 
+fig.height <- 7 
+
+## NB: heavy lifting is done in model-coef-plot-helpers.R
+plots_all <- plot_preds(models[[1]],
+                        str_wrap("Predicted number of contacts",20),
+                        cur_conditions)
+
+comb_all_coef_plot <- plots_all$comb
+
+ggsave(file.path(out.dir, 'model_all_covar_preds.png'),
+       width=fig.width, height=fig.height,
+       comb_all_coef_plot)
+ggsave(file.path(out.dir, 'model_all_covar_preds.pdf'),
+       width=fig.width, height=fig.height,
+       comb_all_coef_plot)
+
+comb_all_coef_plot
+```
+
+Tables with model coefficients for Appendix
+
+```{r}
+ref_cat_vals <- c(NA, NA, NA, NA)
+ref_cats <- tribble(~Coefficient, ~Estimate, ~Est.Error, ~Q2.5, ~Q97.5,
+                    'agecat_w01825', !!!ref_cat_vals,
+                    'genderFemale', !!!ref_cat_vals,
+                    'w_hhsize1', !!!ref_cat_vals, 
+                    'race_ethnicityWhite', !!!ref_cat_vals,
+                    'wave0', !!!ref_cat_vals,
+                    'cityNational', !!!ref_cat_vals,
+                    'reference_weekdayWeekday', !!!ref_cat_vals)
+
+fe_all <- fixef(models[[1]]) %>% 
+  as_tibble(rownames='Coefficient') %>%
+  bind_rows(ref_cats) %>%
+  arrange(Coefficient)
+
+fe_nonhh <- fixef(models[[2]]) %>% 
+  as_tibble(rownames='Coefficient') %>%
+  bind_rows(ref_cats) %>%
+  arrange(Coefficient)
+  
+
+# puts unweighted and weighted next to one another
+#df_forcoeftab_both <- tbl_merge(
+#  tbls=list(fe_all,
+#            fe_nonhh),
+#  tab_spanner = c("All contacts", "Non-household contacts")
+#)
+df_forcoeftab_both <- 
+  bind_cols(fe_all, 
+            fe_nonhh %>% select(-Coefficient)) %>%
+  relabel_coefs_table('Coefficient') %>%
+  relocate(coef_type, coef_name) %>%
+  select(-Coefficient)
+
+#  gt()
+#df_forcoeftab_both %>%
+#  group_by(coef_type) %>%
+#  gt()
+
+saveRDS(df_forcoeftab_both, 
+        file.path(out.dir, 'table_model_coefs.rds'))
+```
+
+
+```{r}
+opts <- options(knitr.kable.NA = "-")
+df_forcoeftab_both %>%
+  arrange(coef_type) %>%
+  janitor::clean_names() %>%
+  group_by(coef_type) %>%
+  kbl(digits=2,
+      booktabs=TRUE,
+      caption="TODO",
+      col.names=c(
+             "", 
+             "Predictor value",
+             "Estimate",
+             "Estimated Std. Error",
+             "Lower CI",
+             "Upper CI",
+             "Estimate",
+             "Estimated Std. Error",
+             "Lower CI",
+             "Upper CI"
+             )) %>%
+  #kableExtra::kable_styling(font_size=8) %>%
+  kableExtra::landscape() %>%
+  column_spec(1, bold = TRUE, color='black') %>%
+  add_header_above(c(" " = 2, 
+                     "All contacts" = 4,
+                     "Non-household contacts" = 4)) %>%
+  collapse_rows(columns=1, valign='top') 
+  
+```
+
+Compare coefs across the two models
+
+```{r}
+fig.width <- 6
+fig.height <- 6
+
+comp_coefs <- bind_cols(fe_all %>% select(Coefficient, est_all=Estimate),
+                        fe_nonhh %>% select(est_nonhh=Estimate)) %>%
+  # remove reference categories
+  filter(! is.na(est_all)) %>%
+  relabel_coefs_table('Coefficient') %>%
+  ggplot(.) +
+  geom_point(aes(x=est_all,
+                 y=est_nonhh,
+                 color=coef_type)) +
+  theme_minimal() +
+  xlab("Estimated coefficient for model predicting all contacts") +
+  ylab("Estimated coefficient for model predicting non-household contacts") +
+  labs(color="Predictor type") +
+  theme(legend.position='bottom')
+
+
+ggsave(file.path(out.dir, 'model_covar_compare.png'),
+       width=fig.width, height=fig.height,
+       comp_coefs)
+ggsave(file.path(out.dir, 'model_covar_compare.pdf'),
+       width=fig.width, height=fig.height,
+       comp_coefs)
+
+comp_coefs
+```
+

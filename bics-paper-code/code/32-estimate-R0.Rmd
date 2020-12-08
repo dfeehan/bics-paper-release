@@ -1,0 +1,582 @@
+---
+title: "Estimate the reproduction number"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(socialmixr)
+library(dplyr)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(cowplot)
+library(reshape2)
+library(ipumsr)
+library(grid)
+library(extrafont)
+
+# load some functions
+source(here('bics-paper-code', 'code', 'utils.R'))
+
+out.dir <- here('bics-paper-code', 'out')
+
+
+```
+
+Load all data
+```{r}
+## survey data
+# set polymod parameters for fetching data
+polymod_country = "United Kingdom"
+polymod_age_limits = c(0, 18, 25, 35, 45,  65)
+
+# polymod
+polymod_mat <- getPolymodMatrix(polymod_country = polymod_country,
+                                polymod_age_limits= polymod_age_limits)
+
+polymod_mat_fb_age <- getPolymodMatrix(polymod_country = polymod_country,
+                                polymod_age_limits= c(0, 15, 25, 35, 45,  65))
+
+
+# polymod without school contacts
+polymod_no_school_mat <- getPolymodMatrixNoSchool(polymod_country = polymod_country,
+                                                  polymod_age_limits= polymod_age_limits)
+
+
+# grab age distns with kids included for making contact matrix symmetric
+acs18_agecat_withkids_targets <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs18_wave1_agecat_withkids.rds'))
+
+# grab 2015 acs data for the FB matrix
+acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
+acs15_agecat_fb <- acs15 %>%
+  mutate(agecat = case_when(
+    AGE %in%  0:15  ~ '[0,15)',
+    AGE %in% 15:24 ~ '[15,25)',
+    AGE %in% 25:34 ~ '[25,35)',
+    AGE %in% 35:44 ~ '[35,45)',
+    AGE %in% 45:64 ~ '[45,65)',
+    AGE >= 65      ~ '[65,100]')
+  ) %>%
+  select(agecat, PERWT) %>%
+  group_by(agecat) %>%
+  summarize(acs_tot = sum(PERWT))
+
+## wave 3 data 
+wave3 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave3_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+## wave 2 data 
+wave2 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave2_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+## wave 1 data
+wave1 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave1_contact_matrix_w0age.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") 
+
+## wave 0 data
+wave0 <- readRDS(here('bics-paper-code', 'data', 'contact-matrices', "wave0_contact_matrix_w0age.rds")) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+## create a list object with the data from each wave
+wave_df_list <- list(wave0, wave1, wave2, wave3)
+num_waves <-length(wave_df_list)
+
+## 2015 facebook study
+fb <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'fb_contact_matrix_fbage.rds')) %>%
+  rename(ego_age = .ego_age, alter_age = .alter_age)  %>%
+  filter(ego_age != "[0,15)") 
+```
+
+Adjust for reciprocity and infer within group contacts for youngest age group
+
+```{r}
+# BICS
+filled_matrix_BICS <- survey_mat_youngest_added_BICS <- list()
+for (n in 1:num_waves) {
+  filled_matrix_BICS[[n]] <- fill_matrix_BICS(df = wave_df_list[[n]], 
+                                              age_df = acs18_agecat_withkids_targets,
+                                              fill_mat = polymod_no_school_mat)
+  survey_mat_youngest_added_BICS[[n]] <- filled_matrix_BICS[[n]]$survey_mat_youngest_added
+}
+
+# 2015 FB study (baseline)
+filled_matrix_fb <- fill_matrix_FB(df = fb, 
+                                     age_df = acs15_agecat_fb,
+                                     fill_mat = polymod_mat_fb_age) # fill FB matrix assuming kids are going to school (i.e. business as usual)
+survey_mat_youngest_added_fb<- filled_matrix_fb$survey_mat_youngest_added
+
+
+```
+
+Relative ratios of eigenvalues 
+
+```{r}
+#BICS compared to polymod
+ratio_BICS_polymod <- list()
+for (n in 1:num_waves){
+  ratio_BICS_polymod[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = polymod_mat)
+}
+
+#BICS compared to 2015 FB study
+ratio_BICS_fb <- list()
+for (n in 1:num_waves){
+  ratio_BICS_fb[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = survey_mat_youngest_added_fb)
+}
+
+```
+
+Load bootstrap data and calculate \(R_0\) and confidence intervals
+
+```{r}
+
+sum_sym_avg_fb_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_fb_bootstrapped.rds'))
+sum_sym_avg_BICS_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_BICS_bootstrapped.rds'))
+
+ratio_bootstrapped_fb_baseline <- readRDS(file.path(out.dir, 'ratio_bootstrapped_fb_baseline.rds'))
+
+R0_bootstrapped_polymod_baseline <- readRDS(file.path(out.dir, 'R0_bootstrapped_polymod_baseline.rds'))
+R0_bootstrapped_fb_baseline <- readRDS(file.path(out.dir, 'R0_bootstrapped_fb_baseline.rds'))
+
+baseline_R0 = 2.5 
+baseline_R0_SE = 0.54
+num_replicates <- nrow(ratio_bootstrapped_fb_baseline)
+num_waves <-length(wave_df_list)
+
+```
+
+
+\(R_0\) estimate and 95% confidence intervals
+
+```{r}
+# polymod baseline: R0 est + ci
+R0_est_polymod_baseline <- lapply(ratio_BICS_polymod, function(x) x*baseline_R0)
+ci_R0_est_polymod_baseline <- list()
+for (n in 1:num_waves) {
+  ci_R0_est_polymod_baseline[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_polymod_baseline[,n])
+  
+}
+
+#fb baseline: R0 est + ci
+R0_est_fb_baseline <- lapply(ratio_BICS_fb, function(x) x*baseline_R0)
+ci_R0_est_fb_baseline <- list()
+for (n in 1:num_waves) {
+  ci_R0_est_fb_baseline[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_fb_baseline[,n])
+  
+}
+
+
+# % decline
+(1 - unlist(ratio_BICS_fb))*100
+
+# % decline in R0 : CI
+ci_ratio_fb_baseline <- list()
+for (n in 1:num_waves){
+  ci_ratio_fb_baseline[[n]] <- (1-calc_R0_ci_percentile(R0_bootstrapped_est = ratio_bootstrapped_fb_baseline[,n]))*100
+}
+
+```
+
+
+Plot \(R_0\) estimates
+
+```{r}
+plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "Baseline", 
+                                     r0 = baseline_R0, 
+                                     ci_low = baseline_R0 - 1.96*baseline_R0_SE, 
+                                     ci_high = baseline_R0 + 1.96*baseline_R0_SE)) %>%
+  rbind(cbind(type = "Wave 0", comparison = "FB",
+              r0 = R0_est_fb_baseline[[1]], 
+              ci_low = ci_R0_est_fb_baseline[[1]][1], 
+              ci_high = ci_R0_est_fb_baseline[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "FB",
+              r0 = R0_est_fb_baseline[[2]], 
+              ci_low = ci_R0_est_fb_baseline[[2]][1], 
+              ci_high = ci_R0_est_fb_baseline[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "FB",
+              r0 = R0_est_fb_baseline[[3]], 
+              ci_low = ci_R0_est_fb_baseline[[3]][1], 
+              ci_high = ci_R0_est_fb_baseline[[3]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "FB",
+              r0 = R0_est_fb_baseline[[4]], 
+              ci_low = ci_R0_est_fb_baseline[[4]][1], 
+              ci_high = ci_R0_est_fb_baseline[[4]][2])) %>%
+  rbind(cbind(type = "Wave 0", comparison = "POLYMOD",
+              r0 = R0_est_polymod_baseline[[1]], 
+              ci_low = ci_R0_est_polymod_baseline[[1]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "POLYMOD",
+              r0 = R0_est_polymod_baseline[[2]], 
+              ci_low = ci_R0_est_polymod_baseline[[2]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "POLYMOD",
+              r0 = R0_est_polymod_baseline[[3]], 
+              ci_low = ci_R0_est_polymod_baseline[[3]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[3]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "POLYMOD",
+              r0 = R0_est_polymod_baseline[[4]], 
+              ci_low = ci_R0_est_polymod_baseline[[4]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[4]][2])) %>%
+  mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
+
+R0plot <- plot_df_r0_ci %>% 
+  ggplot(aes(x=type, y = r0, group = comparison, color = comparison)) +
+  scale_color_manual(name = "Relative to", values = c("black", "blue", "maroon")) +
+  geom_errorbar(width=.1, aes(ymin=ci_low, ymax=ci_high), position=position_dodge(width=0.5)) +
+  geom_point(shape=19, size=3, fill="white", position=position_dodge(width=0.5)) +
+  geom_hline(yintercept = 1, col = "black", linetype = "dotted")+
+  labs(y = expression(R[0]~estimate), x = "")+
+  theme_classic(base_size = 8) +
+  theme(legend.position="bottom")
+
+
+
+ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure.png"), width = 6, height = 4)
+ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure.pdf"), width = 6, height = 4)
+
+R0plot
+
+
+```
+
+Plot age-structured contact matrices
+
+```{r}
+xlabel <- "Age of participant"
+ylabel <- "Age of contact"
+
+mix_plot_filled_in_BICS <- list()
+
+for (n in 1:num_waves) {
+  mix_plot_filled_in_BICS[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+    rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+    mutate(ego_age = case_when(ego_age == "[0,18)" ~ "[0,18)*",
+                               TRUE ~ as.character(ego_age)),
+           alter_age = case_when(alter_age == "[0,18)" ~ "[0,18)*",
+                                 TRUE ~ as.character(alter_age))) %>%
+    ggplot(.) + 
+    geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
+    theme_classic(base_size = 8) +
+    theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5)) +
+    coord_equal() +
+    xlab(xlabel) +
+    ylab(ylabel) +
+    viridis::scale_fill_viridis(name="Average \nnumber \nof contacts", limits=c(0, 3)) 
+  
+}
+
+
+
+
+# BICS versus 2015 study
+mix_plot_BICS_FB_compare <- list()
+fb_tmp <- melt(survey_mat_youngest_added_fb) %>%
+  rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+  filter(!(ego_age %in% c("[0,15)", "[15,25)"))) %>%
+  filter(!( alter_age %in% c("[0,15)", "[15,25)")))
+
+
+for (n in 1:num_waves) {
+  mix_plot_BICS_FB_compare[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+    rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego_BICS = value) %>%
+    filter(!(ego_age %in% c("[0,18)", "[18,25)") & alter_age %in% c("[0,18)", "[18,25)")))  %>%
+    mutate(ego_age = case_when(ego_age == "[0,18)" ~ "[0,18)**",
+                               ego_age == "[18,25)" ~ "[18,25)**",
+                               TRUE ~ as.character(ego_age)),
+           alter_age = case_when(alter_age == "[0,18)" ~ "[0,18)**",
+                                 alter_age == "[18,25)" ~ "[18,25)**",
+                                 TRUE ~ as.character(alter_age))) %>%
+    left_join(.,fb_tmp) %>%
+    mutate(diff = sym_avg_per_ego - sym_avg_per_ego_BICS) %>%
+    ggplot(.) + 
+    geom_tile(aes(x=ego_age, y=alter_age, fill=diff)) +
+    theme_classic(base_size = 8) +
+    theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5)) +
+    coord_equal() +
+    xlab(xlabel) +
+    ylab(ylabel) +
+    viridis::scale_fill_viridis(option = "cividis", 
+                                name="Difference \nin average \nnumber \nof contacts", limits = c(-0.25,5), na.value = "white")
+  
+}
+
+# barplots
+agegroups_fb <- row.names(survey_mat_youngest_added_fb)
+ci_low_fb <- ci_high_fb <- rep(NA, length(agegroups_fb))
+for (a in 1:length(agegroups_fb)){
+  ci_low_fb[a] <- quantile(unlist(purrr::map(sum_sym_avg_fb_bootstrapped, agegroups_fb[a])), 0.025)
+  ci_high_fb[a] <- quantile(unlist(purrr::map(sum_sym_avg_fb_bootstrapped, agegroups_fb[a])), 0.975)
+}
+ci_fb <- as.data.frame(cbind(ego_age = agegroups_fb, ci_low = ci_low_fb, ci_high = ci_high_fb, type = "Baseline"))
+
+mix_plot_BICS_FB_compare_2 <- list()
+
+fb_tmp <- melt(survey_mat_youngest_added_fb) %>%
+  rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+  mutate(type = "Baseline")
+
+
+for (n in 1:num_waves) {
+  
+  # get ci
+  agegroups_BICS <- row.names(survey_mat_youngest_added_BICS[[n]])
+  ci_low_BICS <- ci_high_BICS <- rep(NA, length(agegroups_BICS))
+  for (a in 1:length(agegroups_BICS)){
+    ci_low_BICS[a] <-   sum_sym_avg_BICS_bootstrapped %>% map(list(n, agegroups_BICS[a])) %>% unlist() %>% quantile(., 0.025)
+    ci_high_BICS[a] <-  sum_sym_avg_BICS_bootstrapped %>% map(list(n, agegroups_BICS[a])) %>% unlist() %>% quantile(., 0.975)
+  }
+  
+  ci_BICS <- as.data.frame(cbind(ego_age = agegroups_BICS, ci_low = ci_low_BICS, ci_high = ci_high_BICS, type = "BICS")) 
+  ci_all <- rbind(ci_BICS, ci_fb)
+  
+  mix_plot_BICS_FB_compare_2[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+    rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+    mutate(type = "BICS") %>%
+    rbind(.,fb_tmp) %>%
+    filter(!is.na(alter_age)) %>%
+    group_by(ego_age, type) %>%
+    summarize(average = sum(sym_avg_per_ego, na.rm = TRUE)) %>%
+    left_join(.,ci_all, by = c("ego_age", "type")) %>%
+    mutate(ego_age = case_when(ego_age == "[0,18)" ~ "[0,18)**",
+                               ego_age == "[18,25)" ~ "[18,25)**",
+                               TRUE ~ as.character(ego_age))) %>%
+    filter(!(ego_age %in% c("[0,15)", "[15,25)"))) %>%
+    mutate(ci_high = as.numeric(as.character(ci_high)),
+           ci_low = as.numeric(as.character(ci_low))) %>%
+    
+    
+    ggplot(.) +
+    geom_col(aes(x = ego_age, y = average, fill = type),position = position_identity()) +
+    geom_errorbar(aes(x = ego_age, ymin=ci_low, ymax=ci_high, fill = type), width = 0.2) +
+    theme_classic(base_size = 8) +
+    theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5), legend.title =element_blank()) +
+    xlab(xlabel) +
+    ylab("Average number \nof contacts") +
+    scale_fill_brewer(palette="Blues") 
+}
+
+
+leg1 <- get_legend(mix_plot_filled_in_BICS[[1]] + theme(legend.position="bottom"))
+leg2 <- get_legend(mix_plot_BICS_FB_compare[[1]] + theme(legend.position="bottom"))
+leg3 <- get_legend(mix_plot_BICS_FB_compare_2[[1]] + theme(legend.position="bottom"))
+
+plt1 <- ggpubr::ggarrange(mix_plot_filled_in_BICS[[1]] + theme(legend.position="none"),
+                          mix_plot_BICS_FB_compare[[1]]+ theme(legend.position="none"),
+                          mix_plot_BICS_FB_compare_2[[1]]+ theme(legend.position="none"), 
+                          mix_plot_filled_in_BICS[[2]]+ theme(legend.position="none"), 
+                          mix_plot_BICS_FB_compare[[2]]+ theme(legend.position="none"),
+                          mix_plot_BICS_FB_compare_2[[2]]+ theme(legend.position="none"), 
+                          mix_plot_filled_in_BICS[[3]]+ theme(legend.position="none"), 
+                          mix_plot_BICS_FB_compare[[3]]+ theme(legend.position="none"),
+                          mix_plot_BICS_FB_compare_2[[3]]+ theme(legend.position="none"), 
+                          mix_plot_filled_in_BICS[[4]]+ theme(legend.position="none"), 
+                          mix_plot_BICS_FB_compare[[4]]+ theme(legend.position="none"),
+                          mix_plot_BICS_FB_compare_2[[4]]+ theme(legend.position="none"),
+                          ncol = 3,nrow = 4,
+                          labels = c("A", "E", "I", "B", "F", "J", "C", "G", "K", "D", "H", "L"))
+
+
+
+legends <- plot_grid(leg1, leg2, leg3, nrow = 1)
+mat_plot <- ggpubr::ggarrange(plt1, legends,
+                              nrow = 2, heights = c(9,1)) 
+mat_plot_final <- ggpubr::annotate_figure(mat_plot,
+                                          bottom = ggpubr::text_grob("* NB: Within-group mixing for the [0,18) group was estimated using POLYMOD UK data \n** NB: Youngest age-groups had different widths in the baseline survey", color = "black",
+                                                                     hjust = 1, x = 1, size = 8))
+
+
+
+ggsave(mat_plot_final, file = here("bics-paper-code","out", "matrices.png"), width = 8, height = 9)
+ggsave(mat_plot_final, file = here("bics-paper-code","out", "matrices.pdf"), width = 8, height = 9)
+
+mat_plot_final
+```
+
+
+Load contact matrix and bootstrap resamples, now only keeping contacts without mask usage reported, and calculate \(R_0\) and confidence intervals
+
+```{r}
+# Note: Wave 0 did not collect data on mask usage
+## wave 3 data 
+wave3_nomask <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave3_contact_matrix_w0age_nomask.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+
+## wave 2 data 
+wave2_nomask <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave2_contact_matrix_w0age_nomask.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") %>%
+  filter(!is.na(alter_age))
+
+
+## wave 1 data
+wave1_nomask <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave1_contact_matrix_w0age_nomask.rds')) %>%
+  rename(ego_age =.ego_age, alter_age=.alter_age) %>%
+  filter(ego_age != "[0,18)") 
+
+## create a list object with the data from each wave
+wave_df_list <- list(wave1_nomask, wave2_nomask, wave3_nomask)
+num_waves <-length(wave_df_list)
+
+## Adjust for reciprocity and infer within group contacts for youngest age group
+
+
+# BICS - no mask
+filled_matrix_BICS <- survey_mat_youngest_added_BICS <- list()
+for (n in 1:num_waves) {
+  filled_matrix_BICS[[n]] <- fill_matrix_BICS(df = wave_df_list[[n]], 
+                                              age_df = acs18_agecat_withkids_targets,
+                                              fill_mat = polymod_no_school_mat)
+  survey_mat_youngest_added_BICS[[n]] <- filled_matrix_BICS[[n]]$survey_mat_youngest_added
+}
+
+## Relative ratios of eigenvalues 
+
+#BICS compared to polymod
+ratio_BICS_polymod_nomask <- list()
+for (n in 1:num_waves){
+  ratio_BICS_polymod_nomask[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = polymod_mat)
+}
+
+#BICS compared to 2015 FB study
+ratio_BICS_fb_nomask <- list()
+for (n in 1:num_waves){
+  ratio_BICS_fb_nomask[[n]] <- getRelativeR0(survey_mat = survey_mat_youngest_added_BICS[[n]],
+                                           comparison_mat = survey_mat_youngest_added_fb)
+}
+
+
+sum_sym_avg_fb_nomask_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_fb_nomask_bootstrapped.rds'))
+sum_sym_avg_BICS_nomask_bootstrapped <- readRDS(file.path(out.dir, 'sum_sym_avg_BICS_nomask_bootstrapped.rds'))
+
+ratio_bootstrapped_fb_baseline_nomask <- readRDS(file.path(out.dir, 'ratio_bootstrapped_fb_baseline_nomask.rds'))
+
+R0_bootstrapped_polymod_baseline_nomask <- readRDS(file.path(out.dir, 'R0_bootstrapped_polymod_baseline_nomask.rds'))
+R0_bootstrapped_fb_baseline_nomask <- readRDS(file.path(out.dir, 'R0_bootstrapped_fb_baseline_nomask.rds'))
+
+# polymod baseline: R0 est + ci
+R0_est_polymod_baseline_nomask <- lapply(ratio_BICS_polymod_nomask, function(x) x*baseline_R0)
+ci_R0_est_polymod_baseline_nomask <- list()
+for (n in 1:3) {
+  ci_R0_est_polymod_baseline_nomask[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_polymod_baseline_nomask[,n])
+  
+}
+
+#fb baseline: R0 est + ci
+R0_est_fb_baseline_nomask <- lapply(ratio_BICS_fb_nomask, function(x) x*baseline_R0)
+ci_R0_est_fb_baseline_nomask <- list()
+for (n in 1:3) {
+  ci_R0_est_fb_baseline_nomask[[n]] <- calc_R0_ci_percentile(R0_bootstrapped_est = R0_bootstrapped_fb_baseline_nomask[,n])
+  
+}
+
+```
+
+
+Recreat R0 plot, showing both all contacts and contacts where no mask usage was recorded
+
+
+```{r}
+plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "Baseline", contacts = "All contacts", group = "all",
+                                     r0 = baseline_R0, 
+                                     ci_low = baseline_R0 - 1.96*baseline_R0_SE, 
+                                     ci_high = baseline_R0 + 1.96*baseline_R0_SE)) %>%
+  rbind(cbind(type = "Wave 0 *", comparison = "FB", contacts = "All contacts", group = "FB, all",
+              r0 = R0_est_fb_baseline[[1]], 
+              ci_low = ci_R0_est_fb_baseline[[1]][1], 
+              ci_high = ci_R0_est_fb_baseline[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "FB", contacts = "All contacts", group = "FB, all",
+              r0 = R0_est_fb_baseline[[2]], 
+              ci_low = ci_R0_est_fb_baseline[[2]][1], 
+              ci_high = ci_R0_est_fb_baseline[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "FB", contacts = "All contacts", group = "FB, all",
+              r0 = R0_est_fb_baseline[[3]], 
+              ci_low = ci_R0_est_fb_baseline[[3]][1], 
+              ci_high = ci_R0_est_fb_baseline[[3]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "FB", contacts = "All contacts", group = "FB, all",
+              r0 = R0_est_fb_baseline[[4]], 
+              ci_low = ci_R0_est_fb_baseline[[4]][1], 
+              ci_high = ci_R0_est_fb_baseline[[4]][2])) %>%
+  rbind(cbind(type = "Wave 0 *", comparison = "POLYMOD", contacts = "All contacts", group = "POLYMOD, all",
+              r0 = R0_est_polymod_baseline[[1]], 
+              ci_low = ci_R0_est_polymod_baseline[[1]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[1]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "POLYMOD", contacts = "All contacts", group = "POLYMOD, all",
+              r0 = R0_est_polymod_baseline[[2]], 
+              ci_low = ci_R0_est_polymod_baseline[[2]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[2]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "POLYMOD", contacts = "All contacts", group = "POLYMOD, all",
+              r0 = R0_est_polymod_baseline[[3]], 
+              ci_low = ci_R0_est_polymod_baseline[[3]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[3]][2])) %>%
+    rbind(cbind(type = "Wave 3", comparison = "POLYMOD", contacts = "All contacts", group = "POLYMOD, all",
+              r0 = R0_est_polymod_baseline[[4]], 
+              ci_low = ci_R0_est_polymod_baseline[[4]][1], 
+              ci_high = ci_R0_est_polymod_baseline[[4]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "FB", contacts = "Only non-masked contacts", group = "FB, no mask",
+              r0 = R0_est_fb_baseline_nomask[[1]], 
+              ci_low = ci_R0_est_fb_baseline_nomask[[1]][1], 
+              ci_high = ci_R0_est_fb_baseline_nomask[[1]][2])) %>%
+  rbind(cbind(type = "Wave 2", comparison = "FB", contacts = "Only non-masked contacts", group = "FB, no mask",
+              r0 = R0_est_fb_baseline_nomask[[2]], 
+              ci_low = ci_R0_est_fb_baseline_nomask[[2]][1], 
+              ci_high = ci_R0_est_fb_baseline_nomask[[2]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "FB", contacts = "Only non-masked contacts", group = "FB, no mask",
+              r0 = R0_est_fb_baseline_nomask[[3]], 
+              ci_low = ci_R0_est_fb_baseline_nomask[[3]][1], 
+              ci_high = ci_R0_est_fb_baseline_nomask[[3]][2])) %>%
+  rbind(cbind(type = "Wave 1", comparison = "POLYMOD", contacts = "Only non-masked contacts", group = "POLYMOD, no mask",
+              r0 = R0_est_polymod_baseline_nomask[[1]], 
+              ci_low = ci_R0_est_polymod_baseline_nomask[[1]][1], 
+              ci_high = ci_R0_est_polymod_baseline_nomask[[1]][2])) %>%
+
+  rbind(cbind(type = "Wave 2", comparison = "POLYMOD", contacts = "Only non-masked contacts", group = "POLYMOD, no mask",
+              r0 = R0_est_polymod_baseline_nomask[[2]], 
+              ci_low = ci_R0_est_polymod_baseline_nomask[[2]][1], 
+              ci_high = ci_R0_est_polymod_baseline_nomask[[2]][2])) %>%
+  rbind(cbind(type = "Wave 3", comparison = "POLYMOD", contacts = "Only non-masked contacts", group = "POLYMOD, no mask",
+              r0 = R0_est_polymod_baseline_nomask[[3]], 
+              ci_low = ci_R0_est_polymod_baseline_nomask[[3]][1], 
+              ci_high = ci_R0_est_polymod_baseline_nomask[[3]][2])) %>%
+  mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
+
+R0plot <- plot_df_r0_ci %>% 
+  ggplot(aes(x=type, y = r0, group = group, color = comparison, shape = contacts)) +
+  scale_color_manual(name = "Relative to", values = c("black", "blue",  "maroon")) +
+  geom_errorbar(width=.1, aes(ymin=ci_low, ymax=ci_high), position=position_dodge(width=0.5)) +
+  geom_point(size=3, fill="white", position=position_dodge(width=0.5)) +
+  scale_shape_manual(name = "", values = c(19,18)) +
+  geom_hline(yintercept = 1, col = "black", linetype = "dotted")+
+  labs(y = expression(R[0]~estimate), x = "")+
+  theme_classic(base_size = 8) +
+  theme(legend.position="bottom")
+
+R0plot_final <- ggpubr::annotate_figure(R0plot,
+                                          bottom = ggpubr::text_grob("* NB: Face mask usage data was not collected in Wave 0", color = "black",
+                                                                     hjust = 1, x = 1, size = 8))
+
+
+ggsave(R0plot_final, file = here("bics-paper-code", "out","R0_figure_w_no_mask.png"), width = 6, height = 4)
+ggsave(R0plot_final, file = here("bics-paper-code", "out","R0_figure_w_no_mask.pdf"), width = 6, height = 4)
+
+R0plot_final
+
+
+```

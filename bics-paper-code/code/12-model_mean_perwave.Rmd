@@ -1,0 +1,170 @@
+---
+title: "Calculate mean num contacts per wave and for FB baseline"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+
+model.name <- 'mean_perwave_withfb'
+
+library(tidyverse)
+library(here)
+library(broom)
+library(broom.mixed)
+library(brms)
+library(tidybayes)
+library(tictoc)
+library(cowplot)
+
+theme_set(theme_cowplot())
+```
+
+Create an output directory for the model, if it doesn't already exist
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+dir.create(file.path(out.dir, model.name))
+
+out.dir <- file.path(out.dir, model.name)
+```
+
+```{r}
+# use 4 cores to fit 4 chains in parallel
+options(mc.cores=4)
+```
+
+```{r read-data}
+df_bics <- readRDS(file=file.path(out.dir, '..', 'waves0to2-for-models.rds'))
+
+source(here('bics-paper-code', 'code', 'model-coef-plot-helpers.R'))
+```
+
+Get FB 2015 data
+
+```{r read-fb-data}
+fb2015 <- read_csv(file=here('bics-paper-code', 'data', 'fb-2015-svy', 'fb_ego.csv'))
+  
+fbsampsize <- nrow(fb2015)
+
+fb2015_prep <- fb2015 %>%
+  # normalize weights so they have mean 1 (like BICS data)
+  mutate(weight = (ego_weight / sum(ego_weight))) %>%
+  select(num_cc, num_cc_topcode_val, weight) %>%
+  mutate(wave = 'FB')
+```
+
+Make a simple dataset w/ fb2015 and waves 0, 1, and 2
+
+```{r}
+df_formod <- df_bics %>% 
+  select(num_cc, num_cc_topcode_val, wave, weight=weight_pooled) %>%
+  bind_rows(fb2015_prep) %>%
+  mutate(wave = fct_relevel(factor(wave), 'FB')) %>%
+  mutate(is_topcoded_cc = as.numeric(num_cc >= num_cc_topcode_val))
+
+df_formod
+```
+
+
+# Fit the model to all of the data 
+
+We'll use the sample from Waves 0, 1, and 2 and also the 2015 FB sample for this
+
+```{r fit-model}
+tic(glue::glue("Fitting model {model.name}"))
+nb_brms <- brm(
+                  formula = num_cc | cens(is_topcoded_cc) ~ wave,
+                  family = 'negbinomial',
+                  chains=4,
+                  inits="0",
+                  data=df_formod)
+                 
+toc()
+```
+
+Rhats look great
+
+```{r}
+summary(nb_brms)
+```
+
+Get posterior draws and calculate diff between waves, with CI
+
+```{r}
+draws <- nb_brms %>%
+  spread_draws(b_Intercept, b_wave0, b_wave1, b_wave2, b_wave3) %>%
+  # these are perecent changes from FB to each survey wave
+  # ie, 100 * (fb mean - wave mean) / fb mean
+  mutate(fb_to_w0 = 100*(exp(b_Intercept) - exp(b_Intercept + b_wave0)) / exp(b_Intercept),
+         fb_to_w1 = 100*(exp(b_Intercept) - exp(b_Intercept + b_wave1)) / exp(b_Intercept),
+         fb_to_w2 = 100*(exp(b_Intercept) - exp(b_Intercept + b_wave2)) / exp(b_Intercept),
+         fb_to_w3 = 100*(exp(b_Intercept) - exp(b_Intercept + b_wave3)) / exp(b_Intercept))
+
+summfn <- function(x, name=NULL, qty="Pct. change from FB") { 
+  return(tibble(name = name,
+                qty = qty,
+                mean = mean(x),
+                median = quantile(x,.5),
+                interval_low = quantile(x, .025),
+                interval_high = quantile(x, .975)))
+}
+```
+
+Change: FB to Wave 0
+
+```{r}
+res_w0 <- summfn(draws$fb_to_w0, 'Wave 0')
+res_w0
+```
+
+Change: FB to Wave 1
+
+```{r}
+res_w1 <- summfn(draws$fb_to_w1, 'Wave 1')
+res_w1
+```
+
+
+Change: FB to Wave 2 
+
+```{r}
+res_w2 <- summfn(draws$fb_to_w2, 'Wave 2')
+res_w2
+```
+
+Change: FB to Wave 3 
+
+```{r}
+res_w3 <- summfn(draws$fb_to_w3, 'Wave 3')
+res_w3
+```
+
+Put these together nicely
+
+```{r}
+res <- bind_rows(res_w0, res_w1, res_w2, res_w3)
+res
+```
+
+```{r}
+write_csv(res,
+          file.path(out.dir, paste0("estimated_pct_change_fromfb.csv")))
+```
+
+
+```{r}
+saveRDS(nb_brms, file.path(out.dir, paste0(model.name, '.rds')))
+```
+
+Just to be sure there's not a big difference, compare against raw means (ignoring topcoding)
+
+they are pretty similar - the raw estimates are about 3 to 4% lower each time
+
+```{r}
+df_formod %>% group_by(wave) %>% summarize(mean_num_cc = mean(num_cc))
+(12.8-2.69)/12.8
+(12.8-3.87)/12.8
+(12.8-4.76)/12.8
+```
+
+

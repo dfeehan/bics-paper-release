@@ -1,0 +1,323 @@
+---
+title: "Prep bootstrap data for R0 analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(socialmixr)
+library(dplyr)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(cowplot)
+library(reshape2)
+library(ipumsr)
+library(grid)
+library(extrafont)
+
+# load some functions
+source(here('bics-paper-code', 'code', 'utils.R'))
+
+out.dir <- here('bics-paper-code', 'out')
+
+```
+
+Load ACS age data
+```{r}
+
+# grab age distns with kids included for making contact matrix symmetric
+acs18_agecat_withkids_targets <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs18_wave1_agecat_withkids.rds'))
+
+
+# grab 2015 acs data for the FB matrix
+acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
+acs15_agecat_fb <- acs15 %>%
+  mutate(agecat = case_when(
+    AGE %in%  0:15  ~ '[0,15)',
+    AGE %in% 15:24 ~ '[15,25)',
+    AGE %in% 25:34 ~ '[25,35)',
+    AGE %in% 35:44 ~ '[35,45)',
+    AGE %in% 45:64 ~ '[45,65)',
+    AGE >= 65      ~ '[65,100]')
+  ) %>%
+  select(agecat, PERWT) %>%
+  group_by(agecat) %>%
+  summarize(acs_tot = sum(PERWT))
+
+  
+
+
+```
+
+
+Generate POLYMOD bootstrap resamples 
+
+```{r}
+# set the number of bootstrap replicates
+num_replicates <- 5000
+
+# set polymod parameters for fetching data
+polymod_country = "United Kingdom"
+polymod_age_limits = c(0, 18, 25, 35, 45,  65)
+polymod_fb_age_limits = c(0, 15, 25, 35, 45,  65)
+
+
+# polymod bootstrapped samples
+data(polymod)
+polymod_mat_bootstrapped <- socialmixr::contact_matrix(polymod, 
+                                                       countries = polymod_country, 
+                                                       age.limits = polymod_age_limits, symmetric = TRUE,
+                                                       n = num_replicates)$matrices
+
+
+
+# polymod bootstrapped samples with FB age groups
+polymod_mat_fb_age_bootstrapped <- socialmixr::contact_matrix(polymod, 
+                                                              countries = polymod_country, 
+                                                              age.limits = polymod_fb_age_limits, symmetric = TRUE,
+                                                              n = num_replicates)$matrices
+
+
+# polymod bootstrapped samples with no school contacts
+data(polymod)
+data_part <- polymod$participants
+data_cnt <- polymod$contacts %>% filter(cnt_school == 0)
+
+polymod_no_school_mat_bootstrapped <- socialmixr::contact_matrix(survey(data_part, data_cnt), 
+                                             countries = polymod_country, 
+                                             age.limits = polymod_age_limits, symmetric = TRUE, n = num_replicates)$matrices
+
+
+# save files
+saveRDS(polymod_mat_bootstrapped, 
+        file=here('bics-paper-code','data', 'polymod', 'polymod_bootstrapped.rds'))
+
+saveRDS(polymod_mat_fb_age_bootstrapped, 
+        file=here('bics-paper-code','data', 'polymod', 'polymod_mat_fb_age_bootstrapped.rds'))
+
+saveRDS(polymod_no_school_mat_bootstrapped , 
+        file=here('bics-paper-code','data', 'polymod', 'polymod_no_school_bootstrapped.rds'))
+
+```
+
+
+Generate baseline R0 draws
+
+```{r}
+# baseline R0 (assuming normal distribution with mean 2.5 and sd 0.54)
+baseline_r_bootstrapped <- rnorm(num_replicates, mean = 2.5, sd = 0.54 ) 
+saveRDS(baseline_r_bootstrapped, file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped.rds'))
+
+```
+
+Sensitivity analyses - higher and lower R0 baseline (based on the estimates from Pitzer et al. (2020))
+```{r}
+# baseline R0 (assuming normal distribution with mean 5.17 and sd 0.54)
+baseline_r_bootstrapped_high <- rnorm(num_replicates, mean = 5.17, sd = 0.54 ) 
+saveRDS(baseline_r_bootstrapped_high, file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped_high.rds'))
+
+
+# baseline R0 (assuming normal distribution with mean 1.92 and sd 0.54)
+baseline_r_bootstrapped_low <- rnorm(num_replicates, mean = 1.92, sd = 0.54 ) 
+saveRDS(baseline_r_bootstrapped_low, file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped_low.rds'))
+
+```
+
+
+Load bootstrap data and calculate \(R_0\) 
+
+```{r}
+BICS_bootstrapped_wave0 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices','wave0_contact_matrices_w0age_bootstrapped.rds'))
+BICS_bootstrapped_wave1 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave1_contact_matrices_w0age_bootstrapped.rds'))
+BICS_bootstrapped_wave2 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave2_contact_matrices_w0age_bootstrapped.rds'))
+BICS_bootstrapped_wave3 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave3_contact_matrices_w0age_bootstrapped.rds'))
+
+wave_bootstrapped_df_list <- list(BICS_bootstrapped_wave0,BICS_bootstrapped_wave1,BICS_bootstrapped_wave2, BICS_bootstrapped_wave3)
+
+polymod_no_school_mat_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_no_school_bootstrapped.rds'))
+polymod_mat_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_bootstrapped.rds'))
+polymod_mat_fb_age_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_mat_fb_age_bootstrapped.rds'))
+
+fb_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices','fb_contact_matrices_fbage_bootstrapped.rds'))
+
+
+baseline_R0_bootstrapped <- readRDS(file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped.rds'))
+
+
+baseline_R0 = 2.5 
+baseline_R0_SE = 0.54
+num_replicates <- length(fb_bootstrapped)
+num_waves = length(wave_bootstrapped_df_list)
+
+ratio_bootstrapped_polymod_baseline <- R0_bootstrapped_polymod_baseline <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+ratio_bootstrapped_fb_baseline <- R0_bootstrapped_fb_baseline <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+
+# for average contact by age barplot ci
+sum_sym_avg_fb_bootstrapped <- list()
+sum_sym_avg_BICS_bootstrapped <- list()
+
+
+for (i in 1:num_replicates) {
+  
+  
+  # infer mixing in youngest age group
+  filled_matrix_fb <- fill_matrix_FB(df = fb_bootstrapped[[i]] %>% ungroup() %>%
+                                       rename(ego_age = .ego_age, alter_age = .alter_age) %>% 
+                                       filter(ego_age != "[0,15)"), 
+                                     age_df = acs15_agecat_fb,
+                                     fill_mat = polymod_mat_fb_age_bootstrapped[[i]]$matrix)
+  
+  survey_mat_youngest_added_fb_tmp <- filled_matrix_fb$survey_mat_youngest_added 
+  sum_sym_avg_fb_bootstrapped[[i]] <- rowSums(survey_mat_youngest_added_fb_tmp)
+  
+  # draw baseline R0 value
+  baselineR0_tmp <- baseline_R0_bootstrapped[[i]]  
+  
+  
+  sum_sym_avg_BICS_bootstrapped_tmp <- list()
+  
+  for (n in 1:num_waves) {
+    filled_matrix <- fill_matrix_BICS(df = wave_bootstrapped_df_list[[n]][[i]] %>% ungroup() %>%
+                                        mutate(ego_age = .ego_age, alter_age = .alter_age) %>% 
+                                        filter(ego_age != "[0,18)") %>%
+                                        filter(!is.na(alter_age)), 
+                                      age_df = acs18_agecat_withkids_targets,
+                                      fill_mat = polymod_no_school_mat_bootstrapped[[i]]$matrix)
+    survey_mat_youngest_added_tmp <- filled_matrix$survey_mat_youngest_added
+    
+    sum_sym_avg_BICS_bootstrapped_tmp[[n]] <- rowSums(survey_mat_youngest_added_tmp)
+    
+    
+    # polymod as baseline
+    ratio_bootstrapped_polymod_baseline[i,n] = getRelativeR0(survey_mat = survey_mat_youngest_added_tmp,
+                                                             comparison_mat =polymod_mat_bootstrapped[[i]]$matrix)
+    
+    R0_bootstrapped_polymod_baseline[i,n] <- ratio_bootstrapped_polymod_baseline[i,n]*baselineR0_tmp
+    
+    # fb as baseline
+    ratio_bootstrapped_fb_baseline[i,n] = getRelativeR0(survey_mat = survey_mat_youngest_added_tmp,
+                                                        comparison_mat = survey_mat_youngest_added_fb_tmp)
+    
+    R0_bootstrapped_fb_baseline[i,n] <- ratio_bootstrapped_fb_baseline[i,n]*baselineR0_tmp
+    
+    
+    
+  }
+  
+  sum_sym_avg_BICS_bootstrapped[[i]] <- sum_sym_avg_BICS_bootstrapped_tmp
+  
+}
+
+saveRDS(sum_sym_avg_fb_bootstrapped, file.path(out.dir, 'sum_sym_avg_fb_bootstrapped.rds'))
+saveRDS(sum_sym_avg_BICS_bootstrapped, file.path(out.dir, 'sum_sym_avg_BICS_bootstrapped.rds'))
+
+saveRDS(ratio_bootstrapped_fb_baseline, file.path(out.dir, 'ratio_bootstrapped_fb_baseline.rds'))
+
+
+saveRDS(R0_bootstrapped_polymod_baseline, file.path(out.dir, 'R0_bootstrapped_polymod_baseline.rds'))
+saveRDS(R0_bootstrapped_fb_baseline, file.path(out.dir, 'R0_bootstrapped_fb_baseline.rds'))
+
+
+
+
+```
+Load bootstrap data (keeping only contacts where mask usage was not reported) and calculate \(R_0\) 
+
+```{r}
+# wave 0 data did not ask about mask usage, only loading wave 1 and 2 data here
+BICS_bootstrapped_wave1 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave1_contact_matrices_w0age_nomask_bootstrapped.rds'))
+BICS_bootstrapped_wave2 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave2_contact_matrices_w0age_nomask_bootstrapped.rds'))
+BICS_bootstrapped_wave3 <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'wave3_contact_matrices_w0age_nomask_bootstrapped.rds'))
+
+wave_bootstrapped_df_list <- list(BICS_bootstrapped_wave1,BICS_bootstrapped_wave2, BICS_bootstrapped_wave3)
+
+polymod_no_school_mat_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_no_school_bootstrapped.rds'))
+polymod_mat_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_bootstrapped.rds'))
+polymod_mat_fb_age_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'polymod', 'polymod_mat_fb_age_bootstrapped.rds'))
+
+fb_bootstrapped <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices','fb_contact_matrices_fbage_bootstrapped.rds'))
+
+
+baseline_R0_bootstrapped <- readRDS(file = here('bics-paper-code', 'data', 'polymod', 'baseline_r_bootstrapped.rds'))
+
+
+baseline_R0 = 2.5 
+baseline_R0_SE = 0.54
+num_replicates <- length(fb_bootstrapped)
+num_waves = length(wave_bootstrapped_df_list)
+
+ratio_bootstrapped_polymod_baseline <- R0_bootstrapped_polymod_baseline <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+ratio_bootstrapped_fb_baseline <- R0_bootstrapped_fb_baseline <- matrix(NA, ncol = num_waves, nrow = num_replicates)
+
+# for average contact by age barplot ci
+sum_sym_avg_fb_bootstrapped <- list()
+sum_sym_avg_BICS_bootstrapped <- list()
+
+
+for (i in 1:num_replicates) {
+  
+  
+  # infer mixing in youngest age group
+  filled_matrix_fb <- fill_matrix_FB(df = fb_bootstrapped[[i]] %>% ungroup() %>%
+                                       rename(ego_age = .ego_age, alter_age = .alter_age) %>% 
+                                       filter(ego_age != "[0,15)"), 
+                                     age_df = acs15_agecat_fb,
+                                     fill_mat = polymod_mat_fb_age_bootstrapped[[i]]$matrix)
+  
+  survey_mat_youngest_added_fb_tmp <- filled_matrix_fb$survey_mat_youngest_added 
+  sum_sym_avg_fb_bootstrapped[[i]] <- rowSums(survey_mat_youngest_added_fb_tmp)
+  
+  # draw baseline R0 value
+  baselineR0_tmp <- baseline_R0_bootstrapped[[i]]  
+  
+  
+  sum_sym_avg_BICS_bootstrapped_tmp <- list()
+  
+  for (n in 1:num_waves) {
+    filled_matrix <- fill_matrix_BICS(df = wave_bootstrapped_df_list[[n]][[i]] %>% ungroup() %>%
+                                        mutate(ego_age = .ego_age, alter_age = .alter_age) %>% 
+                                        filter(ego_age != "[0,18)") %>%
+                                        filter(!is.na(alter_age)), 
+                                      age_df = acs18_agecat_withkids_targets,
+                                      fill_mat = polymod_no_school_mat_bootstrapped[[i]]$matrix)
+    survey_mat_youngest_added_tmp <- filled_matrix$survey_mat_youngest_added
+    
+    sum_sym_avg_BICS_bootstrapped_tmp[[n]] <- rowSums(survey_mat_youngest_added_tmp)
+    
+    
+    # polymod as baseline
+    ratio_bootstrapped_polymod_baseline[i,n] = getRelativeR0(survey_mat = survey_mat_youngest_added_tmp,
+                                                             comparison_mat =polymod_mat_bootstrapped[[i]]$matrix)
+    
+    R0_bootstrapped_polymod_baseline[i,n] <- ratio_bootstrapped_polymod_baseline[i,n]*baselineR0_tmp
+    
+    # fb as baseline
+    ratio_bootstrapped_fb_baseline[i,n] = getRelativeR0(survey_mat = survey_mat_youngest_added_tmp,
+                                                        comparison_mat = survey_mat_youngest_added_fb_tmp)
+    
+    R0_bootstrapped_fb_baseline[i,n] <- ratio_bootstrapped_fb_baseline[i,n]*baselineR0_tmp
+    
+    
+    
+  }
+  
+  sum_sym_avg_BICS_bootstrapped[[i]] <- sum_sym_avg_BICS_bootstrapped_tmp
+  
+}
+
+
+saveRDS(sum_sym_avg_fb_bootstrapped, file.path(out.dir, 'sum_sym_avg_fb_nomask_bootstrapped.rds'))
+saveRDS(sum_sym_avg_BICS_bootstrapped, file.path(out.dir, 'sum_sym_avg_BICS_nomask_bootstrapped.rds'))
+
+saveRDS(ratio_bootstrapped_fb_baseline, file.path(out.dir, 'ratio_bootstrapped_fb_baseline_nomask.rds'))
+
+
+saveRDS(R0_bootstrapped_polymod_baseline, file.path(out.dir, 'R0_bootstrapped_polymod_baseline_nomask.rds'))
+saveRDS(R0_bootstrapped_fb_baseline, file.path(out.dir, 'R0_bootstrapped_fb_baseline_nomask.rds'))
+
+
+```
+

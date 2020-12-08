@@ -1,0 +1,225 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(glue)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(tictoc)
+
+library(patchwork)
+
+tic("Running file: ")
+```
+
+Note that the bootstrap directory here should be changed if the bootstraps change
+
+```{r}
+## survey data
+df <-             readRDS(file=here('bics-paper-code', 'data', 'df_all_waves.rds'))
+df_alters <-      readRDS(file=here('bics-paper-code', 'data', 'df_alters_all_waves.rds'))
+## bootstrap resamples
+df_boot <-        readRDS(file=here('bics-paper-code', 'data', 'df_boot_all_waves.rds'))
+df_boot_alters <- readRDS(file=here('bics-paper-code', 'data', 'df_alters_boot_all_waves.rds'))
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+```
+
+
+## Relationships for non-hh contacts - bootstrapped
+
+```{r}
+rel_nice_names <- c(
+  'altercustomer'="This person is my customer/client*",
+  'egoclient'="I am this person's customer/client*",
+  'spouse'="Spouse/romantic partner",
+  'other'='Other',
+  'work'="Work colleague/classmate",
+  'neighbor'="Neighbor/community member",
+  'family'='Family',
+  'friend'='Friend'
+)
+
+tic("Calculating weighted num interviews per bootstrap rep")
+wgt_num_int_boot <- df_boot %>%
+  mutate(wave = factor(wave)) %>%
+  group_by(wave, boot_idx) %>%
+  summarize(wave_wgt_tot = sum(boot_weight))
+toc()
+
+tic("Calculating average per person contacts by relationship")
+alter_rel_avgpp_summ <- df_boot_alters %>%
+  left_join(df_alters %>% select(rid, alter_num, hh_alter, starts_with('rel_')),
+            by=c('rid', 'alter_num')) %>%
+  filter(! hh_alter) %>%
+  mutate(weight = boot_weight * alter_weight) %>%
+  # get weighted total reported contacts in each relationship
+  group_by(wave, boot_idx) %>%
+  summarize_at(vars(starts_with('rel_')), ~sum(as.numeric(.x)*weight)) %>%
+  ungroup() %>%
+  mutate(wave = factor(wave)) %>%
+  # join in the weight totals for this wave and bootstrap rep 
+  left_join(wgt_num_int_boot, by=c('wave', 'boot_idx')) %>%
+  # calculate avg number reported per person
+  mutate_at(vars(starts_with('rel_')), ~ .x / wave_wgt_tot) %>%
+  # make long-form
+  pivot_longer(cols=starts_with('rel_'),
+             names_to='var',
+             values_to='avg_pp') %>%
+  mutate(var = str_replace(var, 'rel_', '')) %>%
+  mutate(var = recode(var, !!!rel_nice_names)) %>%
+  mutate(var = fct_reorder(var, avg_pp)) %>%
+  # summarize
+  group_by(wave, var) %>%
+  summarize(avg_pp_ci_low = quantile(avg_pp, .025, na.rm=TRUE),
+            avg_pp_ci_high = quantile(avg_pp, .975, na.rm=TRUE),
+            avg_pp = mean(avg_pp, na.rm=TRUE))
+toc()
+```
+
+
+```{r rel_hist}
+dodge_amt <- .8
+
+plot_relationships_avgpp_withci <- ggplot(alter_rel_avgpp_summ) +
+  geom_col(aes(x=var, y=avg_pp, fill=wave),
+           position=position_dodge(dodge_amt)) +
+  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+                    # this is odd -- for position_dodge to work with the error bars,
+                    # need to have the fill aesthetc set (even though there's no fill for
+                    # error bars)
+                    fill=wave),
+                width=.2,
+                position=position_dodge(dodge_amt)) +
+  xlab("") +
+  labs(caption=str_wrap("* NB: Added to the instrument after Wave 0", width=55)) +
+  ylab(str_wrap("Avg. number of non-household contacts", width=20)) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width=10)) +
+  #coord_flip() +
+  #facet_grid(. ~ wave) +
+  theme(axis.text.x = element_text(size=rel(.9))) +
+  #      legend.position='bottom') +
+  #theme(legend.position=c(0,-.4), legend.direction='horizontal') +
+  theme(plot.caption = element_text(size=rel(0.7))) +
+  guides(fill=FALSE) +
+  wave_fill +
+  NULL
+
+saveRDS(plot_relationships_avgpp_withci, file.path(out.dir, 'plot_relationships.rds'))
+
+plot_relationships_avgpp_withci
+```
+
+Table for appendix (potentially useful in modeling)
+
+```{r}
+nd <- 2
+
+alter_rel_summ_table <- alter_rel_avgpp_summ %>%
+  ungroup() %>%
+  mutate(avg_ci = glue::glue("{avg} ({ci_low}, {ci_high})",
+                             avg=round(avg_pp,nd), ci_low=round(avg_pp_ci_low,nd), ci_high=round(avg_pp_ci_high,nd))) %>%  
+  mutate(avg_ci = case_when((str_detect(var, '\\*') & (wave == '0')) ~ '',
+                            TRUE ~ paste(avg_ci))) %>%
+  rename(Wave = wave) %>%
+  mutate(Wave = case_when(Wave == '0' ~ 'Wave 0',
+                          Wave == '1' ~ 'Wave 1',
+                          Wave == '2' ~ 'Wave 2',
+                          Wave == '3' ~ 'Wave 3',
+                          TRUE ~ NA_character_)) %>%
+  select(Wave, var, avg_ci) %>%
+  pivot_wider(names_from=Wave,
+              values_from=avg_ci) 
+
+saveRDS(alter_rel_summ_table, file.path(out.dir, 'table_contact_relationships.rds'))
+```
+
+For sensitivity, look at detailed alters for those w/ no weights and those w/ weights
+Do this among non-household alters only
+
+Sensitivity for alter weights / relationships
+
+```{r}
+all <- df_alters %>%
+  filter(! hh_alter) 
+
+nowt <- df_alters %>%
+  filter(! hh_alter) %>%
+  filter(alter_weight == 1)
+
+sens_all <- all %>%
+  select(rid, starts_with('rel_')) %>%
+  pivot_longer(cols=starts_with('rel_'),
+             names_to='var',
+             values_to='value') %>%
+  group_by(var) %>%
+  summarize(frac = mean(value, na.rm=TRUE)) %>%
+  mutate(source = 'all')
+
+sens_nowt <- nowt %>%
+  select(rid, starts_with('rel_')) %>%
+  pivot_longer(cols=starts_with('rel_'),
+             names_to='var',
+             values_to='value') %>%
+  group_by(var) %>%
+  summarize(frac = mean(value, na.rm=TRUE)) %>%
+  mutate(source = "nowt")
+
+sens_rel <- bind_rows(sens_all, sens_nowt) %>%
+  pivot_wider(names_from=source,
+              values_from = frac)
+
+sens_rel
+
+labelwrap <- 25
+fig.width <- 5
+fig.height <- 5
+
+## NB: the slight outlier here is rel_work
+sens_rel_plot <- ggplot(sens_rel) +
+  geom_point(aes(x=all, y=nowt)) +
+  geom_abline(intercept=0, slope=1) +
+  xlab(str_wrap("Fraction in each relationship, all reported contacts", labelwrap)) +
+  ylab(str_wrap("Fraction in each relationship, only contacts with no alter weight needed", labelwrap)) +
+  theme_minimal() +
+  coord_equal()
+
+ggsave(file.path(out.dir, 'sens_relationships.png'),
+     width=fig.width, height=fig.height,
+     sens_rel_plot)
+ggsave(file.path(out.dir, 'sens_relationships.pdf'),
+     width=fig.width, height=fig.height,
+     sens_rel_plot)
+
+sens_rel_plot
+```
+
+```{r}
+toc()
+```
+

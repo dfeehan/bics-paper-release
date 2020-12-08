@@ -1,0 +1,487 @@
+---
+title: "Compare reported contacts across waves"
+output: html_notebook
+---
+
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(glue)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+library(survey)
+
+library(tictoc)
+
+library(patchwork)
+
+tic("Running file: ")
+```
+
+Note that the bootstrap directory here should be changed if the bootstraps change
+
+```{r}
+## survey data
+df <-             readRDS(file=here('bics-paper-code', 'data', 'df_all_waves.rds'))
+df_alters <-      readRDS(file=here('bics-paper-code', 'data', 'df_alters_all_waves.rds'))
+## bootstrap resamples
+df_boot <-        readRDS(file=here('bics-paper-code', 'data', 'df_boot_all_waves.rds'))
+df_boot_alters <- readRDS(file=here('bics-paper-code', 'data', 'df_alters_boot_all_waves.rds'))
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+```
+
+Color scheme for wave
+
+```{r}
+wave_fill  <- scale_fill_brewer(name='Wave', palette='Set2')
+wave_color <- scale_color_brewer(name='Wave', palette='Set2')
+```
+
+
+Make a big plot showing weighted and unweighted sample proportions
+
+```{r}
+covars <- c(
+            'urbanrural', 
+            'hispanic',
+            #'agecat', 
+            'agecat_w0', 
+            'ethnicity', 
+            'weekday', 
+            'educ',
+            'gender', 
+            'w_hhsize')
+
+df_recoded <- df %>%
+  mutate(weekday = case_when(reference_weekday ~ 'Weekday',
+                             TRUE ~ 'Weekend')) %>%
+  mutate(male = case_when(gender == 'Female' ~ 'Female',
+                          TRUE ~ 'Male')) %>%
+  mutate(urbanrural = fct_explicit_na(urbanrural, na_level="(Unknown)")) %>%
+  mutate(educ = case_when(
+                          educ == "College graduate"         ~ "College graduate",
+                          educ == "Some college"             ~ "College, non-graduate",
+                          educ == "High school graduate"     ~ "HS graduate",
+                          educ == "Non-high school graduate" ~ "HS, non-graduate",
+                          TRUE ~ "(Unknown)")) %>%
+  mutate(hispanic = case_when(hispanic == 0 ~ 'Not Hispanic',
+                              hispanic == 1 ~ 'Hispanic',
+                              TRUE ~ '(Unknown)'))
+
+df_fracs <- map_dfr(covars,
+                    function(covar) {
+                        weighted_mean <- function(x, w) {
+                                           return(sum(x*w)/sum(w))
+                                         }  
+
+                        frac_by_covar <- df_recoded %>% 
+                          # pool waves together to keep this simpler
+                          #group_by_at(vars(one_of(covar), wave)) %>% 
+                          group_by_at(vars(one_of(covar))) %>% 
+                          summarize(n_unweighted = n(),
+                                    n_weighted = sum(weight_pooled)) %>%
+                          mutate(frac_unweighted = n_unweighted / sum(n_unweighted),
+                                 frac_weighted = n_weighted / sum(n_weighted)) %>%
+                          mutate(variable = !!covar) %>%
+                          rename(level = !!covar) %>%
+                          mutate(level = paste(level))
+                        
+                        return(frac_by_covar)
+                    })
+
+
+df_fracs_plot <- df_fracs %>%
+  mutate(variable = case_when(
+                              variable == 'gender' ~ 'Other',
+                              variable == 'weekday' ~ 'Other',
+                              variable == 'w_hhsize' ~ "HH Size",
+                              variable == 'city' ~ 'City',
+                              variable == 'hispanic' ~ 'Hispanic',
+                              variable == 'educ' ~ 'Education',
+                              #variable == 'agecat' ~ 'Age',
+                              variable == 'agecat_w0' ~ 'Age',
+                              variable == 'urbanrural' ~ 'Location',
+                              variable == 'ethnicity' ~ 'Ethnicity',
+                              TRUE ~ variable)) %>%
+  # don't need both levels of dichotomous vars
+  filter(level != 'Female') %>%
+  filter(level != 'Weekend') %>%
+  ggplot(.) +
+  geom_point(aes(x=frac_weighted, y=level, color='Weighted')) +
+  geom_point(aes(x=frac_unweighted, y=level, color='Unweighted')) +
+  geom_segment(aes(xend=frac_weighted, x=frac_unweighted, y=level, yend=level),
+               arrow = ggplot2::arrow(length = unit(0.1, "cm")),
+               color='black', 
+               alpha=0.5) +
+  facet_grid(variable ~ ., scales='free_y', space='free_y', switch='both') +
+  xlab("Fraction of sample") +
+  ylab("") +
+  #scale_color_manual(name="", values=wcolors) +
+  scale_color_discrete(name="") +
+  theme_bw() +
+  #theme(legend.position='bottom',
+  theme(legend.position=c(.8, .92),
+        legend.direction='vertical',
+        legend.margin=margin(t=0,unit='cm'),
+        legend.title=element_blank()) +
+  NULL
+
+fig.width <- 6
+fig.height <- 6
+
+ggsave(file.path(out.dir, 'weighted_and_unweighted.png'),
+       width=fig.width, height=fig.height,
+       df_fracs_plot)
+ggsave(file.path(out.dir, 'weighted_and_unweighted.pdf'),
+       width=fig.width, height=fig.height,
+       df_fracs_plot)
+
+df_fracs_plot
+```
+
+
+
+
+
+## table_respondents_both.rds 
+
+```{r}
+sampsize <- df %>%
+  # want the national sample to be at the top of the cities
+  mutate(city = fct_relevel(city, 'National')) %>%
+  group_by(city, wave) %>%
+  summarize(num_interviews = n()) %>%
+  pivot_wider(-num_interviews,
+              names_from='wave',
+              names_prefix='wave',
+              values_from='num_interviews',
+              values_fill=list(num_interviews=0)) %>%
+  mutate(total = wave0 + wave1 + wave2 + wave3) %>%
+  ungroup() %>%
+  add_row(city = 'Full sample',
+          wave0 = sum(.$wave0),
+          wave1 = sum(.$wave1),
+          wave2 = sum(.$wave2),
+          wave3 = sum(.$wave3),
+          total = sum(.$total))
+```
+
+```{r}
+df_fortab <- df %>%
+  mutate(educ=as.character(educ)) %>%
+  mutate(educ = fct_relevel(educ, c("College graduate", "Some college", "High school graduate", "Non-high school graduate")),
+         ethnicity = fct_relevel(ethnicity, c("White", "Black", "Other")),
+         urbanrural = fct_relevel(urbanrural, c("Urban", "Suburban", "Rural")),
+         city = fct_relevel(city, 'National')) %>%
+  select(Gender=gender,
+         Age=agecat_w0,
+         City=city,
+         urban=urbanrural,
+         Wave=wave,
+         Ethnicity=ethnicity,
+         Hispanic=hispanic,
+         Education=educ,
+         #hhsize=hhsize,
+         hhsize=w_hhsize,
+         Weekday=reference_weekday) %>%
+  mutate(Wave = case_when(Wave == '0' ~ 'Wave 0',
+                          Wave == '1' ~ 'Wave 1',
+                          Wave == '2' ~ 'Wave 2',
+                          Wave == '3' ~ 'Wave 3',
+                          TRUE ~ NA_character_)) %>%
+  tbl_summary(by=Wave,
+              label = list(hhsize ~ "Household Size",
+                           urban ~ "Urban/Rural"),
+              missing='no') %>%
+  add_overall() %>%
+  modify_header(label="") 
+```
+
+Weighted version
+
+```{r}
+df_fortab_wgt <- df %>%
+  mutate(educ=as.character(educ)) %>%
+  mutate(educ = fct_relevel(educ, c("College graduate", "Some college", "High school graduate", "Non-high school graduate")),
+         ethnicity = fct_relevel(ethnicity, c("White", "Black", "Other")),
+         urbanrural = fct_relevel(urbanrural, c("Urban", "Suburban", "Rural")),
+         city = fct_relevel(city, 'National')) %>%
+  select(weight_pooled,
+         Gender=gender,
+         Age=agecat_w0,
+         City=city,
+         urban=urbanrural,
+         Wave=wave,
+         Ethnicity=ethnicity,
+         Hispanic=hispanic,
+         Education=educ,
+         hhsize=w_hhsize,
+         Weekday=reference_weekday) %>%
+  mutate(Wave = case_when(Wave == '0' ~ 'Wave 0',
+                          Wave == '1' ~ 'Wave 1',
+                          Wave == '2' ~ 'Wave 2',
+                          Wave == '3' ~ 'Wave 3',
+                          TRUE ~ NA_character_)) %>%
+  svydesign(id = ~1, weights=~weight_pooled, data=.) %>%
+  tbl_svysummary(by=Wave,
+              label = list(hhsize ~ "Household Size",
+                           urban ~ "Urban/Rural"),
+              missing='no') %>%
+  add_overall() %>%
+  modify_header(label="") 
+
+```
+
+```{r}
+# puts unweighted and weighted next to one another
+df_fortab_both <- tbl_merge(
+  tbls=list(df_fortab,
+            df_fortab_wgt),
+  tab_spanner = c("Unweighted", "Weighted")
+)
+df_fortab_both
+```
+
+```{r}
+saveRDS(df_fortab_both, file.path(out.dir, 'table_respondents_both.rds'))
+```
+
+
+## table showing average number of reported contacts parallel to respondent proportions
+
+
+Make a big table showing weighted and unweighted avg num of contacts
+
+```{r}
+covars <- c(
+            'urbanrural', 
+            'agecat_w0', 
+            'race_ethnicity', 
+            'weekday', 
+            'educ',
+            'gender', 
+            'w_hhsize')
+
+df_recoded_cc <- df %>%
+  mutate(weekday = case_when(reference_weekday ~ 'Weekday',
+                             TRUE ~ 'Weekend')) %>%
+  mutate(male = case_when(gender == 'Female' ~ 'Female',
+                          TRUE ~ 'Male')) %>%
+  mutate(urbanrural = fct_explicit_na(urbanrural, na_level="(Unknown)")) %>%
+  mutate(educ = case_when(
+                          educ == "College graduate"         ~ "College graduate",
+                          educ == "Some college"             ~ "College, non-graduate",
+                          educ == "High school graduate"     ~ "HS graduate",
+                          educ == "Non-high school graduate" ~ "HS, non-graduate",
+                          TRUE ~ "(Unknown)")) %>%
+  # combined race/ethnicity category
+  mutate(race_ethnicity = case_when(is.na(hispanic) ~ '(Unknown)',
+                             hispanic == 1 ~ 'Hispanic',
+                             ethnicity == 'Black' ~ 'Black, non-Hispanic',
+                             ethnicity == 'White' ~ 'White, non-Hispanic',
+                             ethnicity == 'Other' ~ 'Other, non-Hispanic'
+                             ),
+         race_ethnicity = fct_relevel(race_ethnicity,
+                                      "White, non-Hispanic"))
+
+df_cc <- map_dfr(covars,
+                    function(covar) {
+                        weighted_mean <- function(x, w) {
+                                           nonmiss <- which(! is.na(x))
+                                           return(sum(x[nonmiss]*w[nonmiss])/sum(w[nonmiss]))
+                                         }  
+
+                        cc_by_covar <- df_recoded_cc %>% 
+                          group_by_at(vars(one_of(covar), wave)) %>% 
+                          summarize(avg_num_cc_unweighted = weighted_mean(num_cc, rep(1, n())),
+                                    avg_num_cc_weighted = weighted_mean(num_cc, weight_pooled),
+                                    avg_num_cc_nonhh_unweighted = weighted_mean(num_cc_nonhh, rep(1, n())),
+                                    avg_num_cc_nonhh_weighted = weighted_mean(num_cc_nonhh, weight_pooled)) %>%
+                          mutate(variable = !!covar) %>%
+                          rename(level = !!covar) %>%
+                          mutate(level = paste(level))
+                        
+                        return(cc_by_covar)
+                    }) %>%
+  mutate(variable = case_when(
+                              variable == 'gender' ~ 'Other',
+                              variable == 'weekday' ~ 'Other',
+                              variable == 'w_hhsize' ~ "HH Size",
+                              variable == 'city' ~ 'City',
+                              variable == 'educ' ~ 'Education',
+                              variable == 'agecat_w0' ~ 'Age',
+                              variable == 'urbanrural' ~ 'Location',
+                              variable == 'race_ethnicity' ~ 'Race/Ethnicity',
+                              TRUE ~ variable)) %>%
+  pivot_wider(names_from=wave,
+              values_from=c(avg_num_cc_unweighted, avg_num_cc_weighted,
+                            avg_num_cc_nonhh_unweighted, avg_num_cc_nonhh_weighted))
+```
+
+
+
+```{r}
+saveRDS(df_cc, file.path(out.dir, 'table_avgcc.rds'))
+```
+
+
+
+
+## Summary stats
+
+helper fn
+
+```{r}
+nicenum <- function(x) {
+  return(format(x, big.mark=","))
+}
+```
+
+
+Total number of contacts
+
+```{r}
+glue::glue("The total number of reported contacts is {tot_contacts}\n",
+           tot_contacts = nicenum(sum(df$num_cc)))
+```
+
+Total number of detailed reports
+
+```{r}
+glue::glue("The total number of detailed reports about contacts is {tot_detailed_contacts}\n",
+           tot_detailed_contacts = nicenum(nrow(df_alters)))
+```
+
+Median number of contacts
+
+```{r}
+df_fortab2 <- df %>%
+  select(num_cc,
+         num_cc_nonhh,
+         #City=city,
+         Wave=wave) %>%
+  mutate(Wave = case_when(Wave == '0' ~ 'Wave 0',
+                          Wave == '1' ~ 'Wave 1',
+                          Wave == '2' ~ 'Wave 2',
+                          Wave == '3' ~ 'Wave 3',
+                          TRUE ~ NA_character_)) %>%
+  tbl_summary(by=Wave,
+              label = list(num_cc ~ "All contacts",
+                           num_cc_nonhh ~ "Non-household contacts"),
+              missing='no') %>%
+              #statistic=all_categorical() ~ "{format(n, big.mark=',')} ({p}%)") %>%
+              #statistic=all_categorical() ~ "{n} ({p}%)") %>%
+  add_overall() %>%
+  modify_header(label="") 
+  
+# not going to save the styling b/c we'll customize it in the paper
+df_fortab2 %>%
+  as_kable_extra() %>%
+  kable_styling() %>%
+  column_spec(1, bold = TRUE, color='black')
+```
+
+Calculate fraction of alters that is only physical in waves 1, 2, and 3
+
+```{r}
+with(df_alters %>% filter(wave != 0, !hh_alter), table(is_physical, is_cc, useNA='ifany'))
+#100 * (629 / (629 + 788 + 5255))
+# pct only physical: just shy of 10%
+100 * (1191 / (1191 + 1442 + 9351))
+```
+
+### Histogram w/ number of contacts
+
+
+```{r hists}
+df_forhist <- df %>%
+  #filter(city=='National') %>%
+  # topcode everything at 10, since that's how we did it in wave 0
+  mutate(plot_num_cc = case_when(num_cc > 10 ~ 10,
+                                 TRUE ~ num_cc),
+         plot_num_cc_nonhh = case_when(num_cc_nonhh > 10 ~ 10,
+                                       TRUE ~ num_cc_nonhh)) %>%
+  select(wave, weight_pooled, plot_num_cc, plot_num_cc_nonhh) %>%
+  pivot_longer(cols=c(plot_num_cc, plot_num_cc_nonhh)) %>%
+  mutate(wave = case_when(wave == 0 ~ 'Wave 0',
+                          wave == 1 ~ 'Wave 1',
+                          wave == 2 ~ 'Wave 2',
+                          wave == 3 ~ 'Wave 3'),
+         qty = case_when(name == 'plot_num_cc' ~ 'All contacts',
+                          name == 'plot_num_cc_nonhh' ~ 'Non-hh contacts'))
+
+df_forhist_med_all <- df_forhist %>%
+  filter(name == 'plot_num_cc') %>%
+  group_by(wave) %>%
+  summarize(med = median(value),
+            wgt_med = Hmisc::wtd.quantile(value, weight_pooled, probs=0.5))
+
+hist_all <- df_forhist %>%
+  filter(qty == 'All contacts') %>%
+  ggplot(.) +
+  geom_histogram(aes(x=value, y=after_stat(density), fill=wave,
+                     weight=weight_pooled), 
+                 binwidth=1) +
+  geom_vline(aes(xintercept=med), data=df_forhist_med_all) +
+  #facet_grid(wave ~ qty, scales=) +
+  facet_grid(wave ~ .) +
+  xlab("Number of contacts") +
+  ggtitle("All contacts") +
+  scale_x_continuous(breaks=scales::pretty_breaks()) +
+  #labs(caption=glue("Values above 10 are topcoded.")) +
+  wave_fill +
+  theme(legend.position='none',
+        plot.title=element_text(size=rel(0.8))) +
+  NULL
+
+df_forhist_med_nonhh <- df_forhist %>%
+  filter(name == 'plot_num_cc_nonhh') %>%
+  group_by(wave) %>%
+  summarize(med = median(value),
+            wgt_med = Hmisc::wtd.quantile(value, weight_pooled, probs=0.5))
+
+hist_nonhh <- df_forhist %>%
+  filter(qty == 'Non-hh contacts') %>%
+  ggplot(.) +
+  geom_histogram(aes(x=value, y=after_stat(density), fill=wave,
+                     weight=weight_pooled), 
+                 binwidth=1) +
+  geom_vline(aes(xintercept=med), data=df_forhist_med_nonhh) +
+  #facet_grid(wave ~ qty, scales=) +
+  facet_grid(wave ~ .) +
+  xlab("Number of contacts") +
+  ggtitle(str_wrap("Non-household contacts",width=15)) +
+  scale_x_continuous(breaks=scales::pretty_breaks()) +
+  #labs(caption=glue("Values above 10 are topcoded.")) +
+  wave_fill +
+  theme(legend.position='none',
+        plot.title=element_text(size=rel(0.8))) +
+  NULL
+
+hist_all
+hist_nonhh
+```
+
+
+```{r}
+saveRDS(list(hist_all = hist_all,
+             hist_nonhh = hist_nonhh),
+        file=file.path(out.dir, "num_cc_hists.rds"))
+toc()
+```
+
+

@@ -1,0 +1,247 @@
+---
+title: "Sensitivity analysis : Comparison with Prem et al. (2017)"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(socialmixr)
+library(dplyr)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(cowplot)
+library(reshape2)
+library(ipumsr)
+library(grid)
+library(extrafont)
+
+# load some functions
+source(here('bics-paper-code', 'code', 'utils.R'))
+
+```
+
+Read in raw data from prem et al. (2017) (Supporting Information)
+
+```{r}
+prem_mat <- read.csv(file = here("data", "prem_contact_matrix", "prem_usa.csv"), header=FALSE) 
+# 5 year age groups
+row.names(prem_mat) <- c("[0,5)", "[5,10)", "[10,15)", "[15,20)", "[20,25)", 
+                         "[25,30)", "[30,35)" ,"[35,40)", "[40,45)", "[45,50)", 
+                         "[50,55)", "[55,60)", "[60,65)", "[65,70)", "[70,75)", 
+                         "[75,80]")
+names(prem_mat) <- c("[0,5)", "[5,10)", "[10,15)", "[15,20)", "[20,25)", 
+                     "[25,30)", "[30,35)" ,"[35,40)", "[40,45)", "[45,50)", 
+                     "[50,55)", "[55,60)", "[60,65)", "[65,70)", "[70,75)", 
+                     "[75,80]")
+
+prem_mat <- prem_mat %>% as.matrix()
+
+# grab 2018 acs data for the same age categories
+acs18 <- read_ipums_micro(ddi=here('data', 'ACS', 'usa_00008.xml'))
+acs18_agecat_prem <- acs18 %>%
+  mutate(agecat = case_when(
+    AGE %in%  0:4  ~ '[0,5)',
+    AGE %in%  5:9  ~ '[5,10)',
+    AGE %in% 10:14 ~ '[10,15)',
+    AGE %in% 15:19 ~ '[15,20)',
+    AGE %in% 20:24 ~ '[20,25)',
+    AGE %in% 25:29 ~ '[25,30)',
+    AGE %in% 30:34 ~ '[30,35)',
+    AGE %in% 35:39 ~ '[35,40)',
+    AGE %in% 40:44 ~ '[40,45)',
+    AGE %in% 45:49 ~ '[45,50)',
+    AGE %in% 50:54 ~ '[50,55)',
+    AGE %in% 55:59 ~ '[55,60)',
+    AGE %in% 60:64 ~ '[60,65)',
+    AGE %in% 65:69 ~ '[65,70)',
+    AGE %in% 70:74 ~ '[70,75)',
+    AGE %in% 75:80 ~ '[75,80]')
+  ) %>%
+  select(agecat, PERWT) %>%
+  group_by(agecat) %>%
+  summarize(acs_tot = sum(PERWT))
+
+```
+
+
+Convert age groups in Prem et al. (2017) to match those in Feehan and Cobb (2019). To do so, we adjust the raw Prem et al. (2017) estimates for the population age structure and reciprocity.
+
+```{r}
+# calculate total contacts  using ACS population data
+tmp_prem <- melt(prem_mat, varnames = c("ego_age", "alter_age"), value.name = "contacts") %>%
+  left_join(., acs18_agecat_prem, by = c("ego_age" = "agecat")) %>%
+  rename(ego_acs_N = acs_tot) %>%
+  left_join(., acs18_agecat_prem, by = c("alter_age" = "agecat")) %>%
+  rename(alter_acs_N = acs_tot) %>%
+  mutate(total_contacts = contacts * ego_acs_N) # average contacts * population size in that age group
+
+# sum total contacts by age categories in the Feehan and Cobb (2019) study
+prem_mat_fb_age_tmp <- tmp_prem %>% 
+  mutate(ego_age_fb = case_when(ego_age %in% c("[0,5)", "[5,10)", "[10,15)") ~ "[0,15)",
+                                ego_age %in% c("[15,20)", "[20,25)") ~ "[15,25)",
+                                ego_age %in% c("[25,30)", "[30,35)") ~ "[25,35)",
+                                ego_age %in% c("[35,40)", "[40,45)") ~ "[35,45)",
+                                ego_age %in% c("[45,50)", "[50,55)", "[55,60)", "[60,65)") ~ "[45,65)",
+                                TRUE ~ "[65,80]")) %>%
+  mutate(alter_age_fb = case_when(alter_age %in% c("[0,5)", "[5,10)", "[10,15)") ~ "[0,15)",
+                                  alter_age %in% c("[15,20)", "[20,25)") ~ "[15,25)",
+                                  alter_age %in% c("[25,30)", "[30,35)") ~ "[25,35)",
+                                  alter_age %in% c("[35,40)", "[40,45)") ~ "[35,45)",
+                                  alter_age %in% c("[45,50)", "[50,55)", "[55,60)", "[60,65)") ~ "[45,65)",
+                                  TRUE ~ "[65,80]")) %>%
+  select(ego_age_fb, alter_age_fb, total_contacts) %>%
+  group_by(ego_age_fb, alter_age_fb) %>%
+  summarise_all(sum) 
+
+
+prem_mat_fb_age <- acs18_agecat_prem %>%
+  mutate(agecat_fb = case_when(agecat %in% c("[0,5)", "[5,10)", "[10,15)") ~ "[0,15)",
+                               agecat %in% c("[15,20)", "[20,25)") ~ "[15,25)",
+                               agecat %in% c("[25,30)", "[30,35)") ~ "[25,35)",
+                               agecat %in% c("[35,40)", "[40,45)") ~ "[35,45)",
+                               agecat %in% c("[45,50)", "[50,55)", "[55,60)", "[60,65)") ~ "[45,65)",
+                               agecat %in% c("[65,70)", "[70,75)", "[75,80]" ) ~ "[65,80]")) %>%
+  group_by(agecat_fb) %>%
+  summarise(acs_tot = sum(acs_tot)) %>% # add up populations in the age groups
+  left_join(prem_mat_fb_age_tmp,., by = c("ego_age_fb" = "agecat_fb")) %>%
+  left_join(.,prem_mat_fb_age_tmp, by = c("ego_age_fb" = "alter_age_fb", "alter_age_fb" = "ego_age_fb")) %>%
+  mutate(sym_avg_per_ego = (total_contacts.x + total_contacts.y) / (2*acs_tot) ) %>% # adjust for reciprocity
+  select(ego_age_fb, alter_age_fb, sym_avg_per_ego) %>%
+  mutate(type = "Prem et al. (2017)") %>%
+  rename(ego_age = ego_age_fb, alter_age = alter_age_fb) %>% as.data.frame()
+
+```
+
+Compare with the Feehan and Cobb (2019) study i.e. the baseline used in the paper, as well as the UK polymod data
+
+
+```{r}
+# Get polymod and FB data
+polymod_mat_fb_age <- getPolymodMatrix(polymod_country = polymod_country,
+                                polymod_age_limits= c(0, 15, 25, 35, 45,  65))
+
+# grab 2015 acs data for the FB matrix
+acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
+acs15_agecat_fb <- acs15 %>%
+  mutate(agecat = case_when(
+    AGE %in%  0:15  ~ '[0,15)',
+    AGE %in% 15:24 ~ '[15,25)',
+    AGE %in% 25:34 ~ '[25,35)',
+    AGE %in% 35:44 ~ '[35,45)',
+    AGE %in% 45:64 ~ '[45,65)',
+    AGE >= 65      ~ '[65,100]')
+  ) %>%
+  select(agecat, PERWT) %>%
+  group_by(agecat) %>%
+  summarize(acs_tot = sum(PERWT))
+
+# 2015 facebook study
+fb <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'fb_contact_matrix_fbage.rds')) %>%
+  rename(ego_age = .ego_age, alter_age = .alter_age)  %>%
+  filter(ego_age != "[0,15)") 
+
+# adjust for reciprocity and impute contact for youngest age group 
+filled_matrix_fb <- fill_matrix_FB(df = fb, 
+                                     age_df = acs15_agecat_fb,
+                                     fill_mat = polymod_mat_fb_age) # fill FB matrix assuming kids are going to school (i.e. business as usual)
+survey_mat_youngest_added_fb<- filled_matrix_fb$survey_mat_youngest_added
+
+
+```
+
+
+```{r}
+prem_fb_age_mixplot <- prem_mat_fb_age %>%
+  mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
+                             ego_age == "[65,100]" ~ "[65,100]*",
+                             TRUE ~ as.character(ego_age))) %>%
+  ggplot(.) + 
+  geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
+  theme_classic(base_size = 8) +
+  theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5)) +
+  coord_equal() +
+  xlab("Age of individual") +
+  ylab(ylabel) +
+  viridis::scale_fill_viridis(name="Average \nnumber \nof contacts", limits=c(0, 10)) +
+  ggtitle("Prem et al. (2017)")
+  
+
+fb_mixplot <- mix_plot_filled_in_fb <- melt(survey_mat_youngest_added_fb) %>%
+  rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+  mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
+                             ego_age == "[65,100]" ~ "[65,100]*",
+                             TRUE ~ as.character(ego_age))) %>%
+  ggplot(.) + 
+  geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
+  theme_classic(base_size = 8) +
+  theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5)) +
+  coord_equal() +
+  xlab(xlabel) +
+  ylab(ylabel) +
+  viridis::scale_fill_viridis(name="Average \nnumber \nof contacts", limits=c(0, 10)) +
+  ggtitle("Feehan and Cobb (2019)")
+
+
+polymod_mixplot <- melt(polymod_mat_fb_age, varnames = c("ego_age", "alter_age"), value.name = "contacts") %>%
+    mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
+                             ego_age == "[65,100]" ~ "[65,100]*",
+                             TRUE ~ as.character(ego_age))) %>%
+  ggplot(.) + 
+  geom_tile(aes(x=ego_age, y=alter_age, fill=contacts)) +
+  theme_classic(base_size = 8) +
+  theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5)) +
+  coord_equal() +
+  xlab(xlabel) +
+  ylab(ylabel) +
+  viridis::scale_fill_viridis(name="Average \nnumber \nof contacts", limits=c(0, 10)) +
+  ggtitle("POLYMOD")
+
+
+fb_tmp <- melt(survey_mat_youngest_added_fb) %>%
+  rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
+  mutate(type = "Feehan and Cobb (2019)")
+
+polymod_tmp <- melt(polymod_mat_fb_age, varnames = c("ego_age", "alter_age"), value.name = "sym_avg_per_ego") %>%
+  mutate(type = "POLYMOD")
+
+barplot <- rbind(prem_mat_fb_age ,fb_tmp, polymod_tmp) %>%
+  filter(!is.na(alter_age)) %>%
+  group_by(ego_age, type) %>%
+  summarize(average = sum(sym_avg_per_ego, na.rm = TRUE)) %>%
+  mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
+                             ego_age == "[65,100]" ~ "[65,100]*",
+                             TRUE ~ as.character(ego_age))) %>%
+  ggplot(.) +
+  geom_col(aes(x = as.factor(ego_age), y = average, fill = type),position = position_dodge()) +
+  theme_classic(base_size = 8) +
+  theme(axis.text.x=element_text(angle=90,hjust=1, vjust=.5), legend.title =element_blank()) +
+  xlab(xlabel) +
+  ylab("Average number \nof contacts") +
+  scale_fill_brewer(palette="Blues") 
+
+
+leg1 <- get_legend(fb_mixplot + theme(legend.position = "bottom"))
+leg2 <- get_legend(barplot + theme(legend.position = "bottom") + guides(fill=guide_legend(nrow=2,byrow=TRUE)))
+plt1 <- ggpubr::ggarrange(prem_fb_age_mixplot + theme(legend.position="none"),
+                  fb_mixplot + theme(legend.position="none"),
+                  polymod_mixplot + theme(legend.position = "none"),
+                  barplot + theme(legend.position="none"),
+                  ncol = 4,nrow = 1,
+                  labels = c("A", "B", "C", "D"))
+legends <- plot_grid(leg1, get_legend(fb_mixplot + theme(legend.position = "none")),get_legend(fb_mixplot + theme(legend.position = "none")), leg2, nrow = 1)
+mat_plot_prem_fb <- ggpubr::ggarrange(plt1, legends,
+                              nrow = 2, heights = c(9,1)) 
+mat_plot_prem_fb_final <- ggpubr::annotate_figure(mat_plot_prem_fb,
+                                          bottom = ggpubr::text_grob("* NB: Oldest age groups defined differently across studies", color = "black",
+                                                                     hjust = 1, x = 1, face  = "bold", size = 8))
+
+mat_plot_prem_fb_final
+
+ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare-w-prem.png"), width = 9, height = 5)
+ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare-w-prem.pdf"), width = 9, height = 5)
+
+
+```

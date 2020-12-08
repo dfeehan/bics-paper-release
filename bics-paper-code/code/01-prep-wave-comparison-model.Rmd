@@ -1,0 +1,134 @@
+---
+title: "Prep data for wave comparison models"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+
+library(flexdashboard)
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(cowplot)
+library(broom)
+library(brms)
+library(tidybayes)
+library(tictoc)
+
+library(gt)
+library(gtsummary)
+library(kableExtra)
+
+theme_set(theme_cowplot())
+```
+
+Create an output directory for the model, if it doesn't already exist
+
+```{r}
+out.dir <- here('bics-paper-code', 'out')
+dir.create(out.dir, showWarnings=FALSE)
+```
+
+## Prep data for models predicting number of contacts
+
+```{r set-topcode}
+TOPCODE_VALUE <- 29
+```
+
+```{r read-data}
+df <-        readRDS(file=here('bics-paper-code', 'data', 'df_all_waves.rds'))
+df_alters <- readRDS(file=here('bics-paper-code', 'data', 'df_alters_all_waves.rds'))
+```
+
+```{r}
+df <- df %>%
+  mutate(num_cc_topcode_val = case_when(num_cc_topcode_val > TOPCODE_VALUE ~ TOPCODE_VALUE,
+                                     TRUE ~ num_cc_topcode_val),
+         num_cc_nonhh_topcode_val = case_when(num_cc_nonhh_topcode_val > TOPCODE_VALUE ~ TOPCODE_VALUE,
+                                              TRUE ~ num_cc_nonhh_topcode_val)) %>%
+  mutate(num_cc = case_when(num_cc > num_cc_topcode_val ~ num_cc_topcode_val,
+                            TRUE ~ num_cc),
+         num_cc_nonhh = case_when(num_cc_nonhh > num_cc_nonhh_topcode_val ~ num_cc_nonhh_topcode_val,
+                                  TRUE ~ num_cc_nonhh)) 
+```
+
+Prep the data for the two models
+
+```{r fit-model}
+df_formod <- df %>%
+                    ## if we want to interact wave and city, 
+                    ## we have to be careful with Philadelphia,
+                    ## which was only included in wave 1
+                    #filter(city != 'Philadelphia') %>%
+                    mutate(
+                      # was this obs topcoded?
+                      is_topcoded_cc = ifelse(num_cc == num_cc_topcode_val, 1, 0),
+                      is_topcoded_cc_nonhh = ifelse(num_cc_nonhh == num_cc_nonhh_topcode_val, 1, 0),
+                      # rename to make plots more readable
+                      reference_weekday = case_when(! reference_weekday ~ 'Weekend',
+                                                    TRUE ~ 'Weekday'),
+                      # reference cateogry: wave 0
+                      wave = factor(wave),
+                      wave = fct_relevel(wave, '0'),
+                      # reference cateogory: national sample
+                      city = fct_relevel(city, 'National'),
+                      # reference cateogory: white
+                      ethnicity = fct_relevel(ethnicity, 'White'),
+                      # combined race/ethnicity category
+                      race_ethnicity = case_when(is.na(hispanic) ~ '(Unknown)',
+                                                 hispanic == 1 ~ 'Hispanic',
+                                                 ethnicity == 'Black' ~ 'Black, non-Hispanic',
+                                                 ethnicity == 'White' ~ 'White, non-Hispanic',
+                                                 ethnicity == 'Other' ~ 'Other, non-Hispanic'
+                                                 ),
+                      race_ethnicity = fct_relevel(race_ethnicity,
+                                                   "White, non-Hispanic"),
+                      educ = fct_explicit_na(educ, na_level = "(Unknown)"),
+                      educ = fct_relevel(educ, 'High school graduate'),
+                      # reference cateogory: 18-25 age group
+                      agecat = fct_relevel(agecat, '[18,25)'),
+                      # reference cateogory: 35-44 age group
+                      #agecat = fct_relevel(agecat, '[35,45)')
+                      # reference cateogory: 18-25 age group
+                      w_hhsize = fct_relevel(w_hhsize, '1')
+                    ) 
+```
+
+
+```{r}
+saveRDS(df_formod, file.path(out.dir, 'waves0to2-for-models.rds'))
+```
+
+## Prep data for models predicting mask use for non-hh contacts in waves 1 and 2 
+
+Want data on non-household contacts from waves 1 and 2,
+with some respondent-level covars joined in
+
+```{r}
+df_alters_mask <- df_alters %>% 
+  filter(wave != 0) %>%
+  filter(! hh_alter) %>%
+  # want to take these from df with reference categories set above
+  select(-wave, -city) %>%
+  left_join(df_formod %>% 
+              select(rid,
+                     wave, city,
+                     ego_gender = gender,
+                     ego_hhsize = w_hhsize,
+                     ego_ethnicity = ethnicity,
+                     ego_hispanic = hispanic,
+                     ego_race_ethnicity = race_ethnicity,
+                     ego_educ = educ,
+                     reference_weekday = reference_weekday,
+                     ego_num_cc = num_cc,
+                     ego_num_cc_nonhh = num_cc_nonhh))
+```
+
+```{r}
+saveRDS(df_alters_mask, file.path(out.dir, 'waves1to2-contacts-for-models.rds'))
+```
+
+
+
