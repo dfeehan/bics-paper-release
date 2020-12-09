@@ -2,7 +2,10 @@
 root.dir <- "bics-paper-release"
 
 ## Download data
-piggyback::pb_download(file="data.zip", repo="dfeehan/bics-piggyback-test", tag="v0.0.1", dest=file.path(root.dir, "bics-paper-code")
+piggyback::pb_download(file="data.zip", 
+		       repo="dfeehan/bics-piggyback-test", 
+		       tag="v0.0.1", 
+		       dest=file.path(root.dir, "bics-paper-code"))
 
 ## Unzip data
 unzip(file.path(root.dir, "bics-paper-code", "data.zip"), 
