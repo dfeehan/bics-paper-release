@@ -16,24 +16,24 @@ instructions below.
 
 The data we provide are
 
-* data/
-	- df_all_waves.rds - the survey responses 
-	- df_boot_all_waves.rds - bootstrap weights to accompany df_all_waves.rds
-	- df_alters_all_waves.rds - file with info about detailed contacts reported by respondentts
-	- df_alters_boot_all_waves.rds - bootstrap weights to accompany df_alters_all_waves.rds
-* data/ACS
-	- acs15_fb_agecat.rds - total number of people in the US in 2015 by age categories used in FB survey
-	- acs15_wave0_agecat.rds - total number of people in the US in 2015 by age cateogries used in our survey
-	- acs18_wave0_agecat.rds - total number of people in the US in 2018 by age categories used in our survey
-	- acs18_national_targets.rds - distribution of 2018 US population by covariates that we use in calibration weighting
-	- acs18_wave1_agecat_withkids.rds - total number of people in the US in 2018 by age categories that include children
-* data/fb-2015-svy
-	- fb_ego.csv - survey responses
-	- fb_alters.csv - detailed contacts reported in survey
-	- fb_bootstrapped_weights.csv - bootstrap weights to accompany fb_ego.csv
-* data/prem_contact_matrix
-	- prem_usa.csv - MUST BE DOWNLOADED BY YOU: see below 
-* data/polymod
+* `data/`
+	- `df_all_waves.rds` - the survey responses 
+	- `df_boot_all_waves.rds` - bootstrap weights to accompany df_all_waves.rds
+	- `df_alters_all_waves.rds` - file with info about detailed contacts reported by respondentts
+	- `df_alters_boot_all_waves.rds` - bootstrap weights to accompany df_alters_all_waves.rds
+* `data/ACS`
+	- `acs15_fb_agecat.rds` - total number of people in the US in 2015 by age categories used in FB survey
+	- `acs15_wave0_agecat.rds` - total number of people in the US in 2015 by age cateogries used in our survey
+	- `acs18_wave0_agecat.rds` - total number of people in the US in 2018 by age categories used in our survey
+	- `acs18_national_targets.rds` - distribution of 2018 US population by covariates that we use in calibration weighting
+	- `acs18_wave1_agecat_withkids.rds` - total number of people in the US in 2018 by age categories that include children
+* `data/fb-2015-svy`
+	- `fb_ego.csv` - survey responses
+	- `fb_alters.csv` - detailed contacts reported in survey
+	- `fb_bootstrapped_weights.csv` - bootstrap weights to accompany fb_ego.csv
+* `data/prem_contact_matrix`
+	- `prem_usa.csv` - MUST BE DOWNLOADED BY YOU: see below 
+* `data/polymod`
 	- [this directory starts empty, but has files generated in it by the scripts]
 
 TODO - Prem data - before running the code, you must download this file from TODO
