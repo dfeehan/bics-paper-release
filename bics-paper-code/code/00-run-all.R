@@ -15,7 +15,11 @@ unzip(file.path(root.dir, "bics-paper-code", "data.zip"),
 rmd_files <- list.files(path=file.path(root.dir, "bics-paper-code", "code"), pattern=".Rmd")
 
 for (cur_file in rmd_files) {
-	  cat("Running ", cur_file, "\n")
-  rmarkdown::render(file.path(root.dir, "bics-paper-code", "code", cur_file))
+	cat("================================\n")
+	tictoc::tic(glue::glue("Running {cur_file}"))
+	cat("Running ", cur_file, "\n")
+  	rmarkdown::render(file.path(root.dir, "bics-paper-code", "code", cur_file))
+  	tictoc::toc()
+	cat("================================\n")
 }
 
