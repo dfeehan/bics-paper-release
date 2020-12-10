@@ -32,11 +32,13 @@ The data we provide are
 	- `fb_alters.csv` - detailed contacts reported in survey
 	- `fb_bootstrapped_weights.csv` - bootstrap weights to accompany fb_ego.csv
 * `data/prem_contact_matrix`
-	- `prem_usa.csv` - MUST BE DOWNLOADED BY YOU: see below 
+	- `prem_usa.csv` - age-structured contact matrix for the United States from [Prem *et al.* (2017)] (https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697) **NOTE**: This data must be downloaded by you. See instructions below.
 * `data/polymod`
 	- [this directory starts empty, but has files generated in it by the scripts]
 
-TODO - Prem data - before running the code, you must download this file from TODO
+Data from Prem *et al.* (2017) data - You must download this data from [here](https://doi.org/10.1371/journal.pcbi.1005697.s002). The contact matrix for the US (for all locations) is available in a tab in the `MUestimates_all_locations_2.xlsx` file in the downloaded folder. Save this tab as a `csv` file with the name `prem_usa.csv` in the `prem_contact_matrix` subfolder in the `data` folder.
+
+NOTE: The first time you run `00-run-all.R` (see below), the last script (`35-sensitivity-compare-with-Prem-matrix.Rmd`) will stop with an error because it can't find the `prem_usa.csv` datafile. Once you create this file following the above instructions, you will be able to run `00-run-all.R` without any errors. 
 
 ## CODE
 
@@ -57,7 +59,11 @@ We try to give a rough sense for expected runtime below.
 * `22-nonhhcc_nb_censored_loaded_weighted` - this is the model for all contacts
 * `23-plot_model_predictions_by_covars` - TODO 
 * `30-contact-matrices` - TODO 
-* TODO - AYESHA, COULD YOU PLEASE DESCRIBE THE FILES YOU WORKED ON?
+* `31-prep-estimate-R0-bootstrap` - this prepares the dataset that is used for the epidemiological analyses
+* `32-estimate-R0` - this file generates age-structured contact matrices from the survey data and the corresponding R<sub>0 estimates 
+* `33-sensitivity-estimate-R0-onlycc` - this file assesses the sensitivity of the R<sub>0 estimates  to including / not including physical contact in Waves 1 and 2
+* `34-sensitivity-high-low-baselineR0` - this file assesses the sensitivity of the R<sub>0 estimates  to assuming higher and lower baseline values
+* `35-sensitivity-compare-with-Prem-matrix.Rmd` - this file compares the data from Feehan and Cobb (2019) with estimates from Prem *et al.* (2017) and the UK POLYMOD data from Mossong *et al* (2008)
 
 Additionally, there are two files that have some miscellaneous helper functions:
 
@@ -85,5 +91,5 @@ To use Docker
 1. Open a web browser and point it to localhost:8888
 1. Log onto Rstudio with username 'rstudio' and password 'pass'
 1. Open the file `bics-paper-code/code/00-run-all.r`
-1. Running the file should replicate everything. If you have not downloaded the Prem et al data, the last script (`35-sensitivity-compare-with-Prem-matrix.Rmd`) will stop with an error because it can't find the Prem et al datafile
+1. Running the file should replicate everything. If you have not downloaded the Prem *et al* (2017) data, the last script (`35-sensitivity-compare-with-Prem-matrix.Rmd`) will stop with an error because it can't find the `prem_usa.csv` datafile.
 
