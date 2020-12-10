@@ -32,7 +32,7 @@ The data we provide are
 	- `fb_alters.csv` - detailed contacts reported in survey
 	- `fb_bootstrapped_weights.csv` - bootstrap weights to accompany fb_ego.csv
 * `data/prem_contact_matrix`
-	- `prem_usa.csv` - age-structured contact matrix for the United States from [Prem *et al.* (2017)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697). **NOTE**: This data must be downloaded by you. See instructions below.
+	- `prem_usa.csv` - estimated contact matrix for the United States from [Prem *et al.* (2017)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697). **NOTE**: This data must be downloaded by you. See instructions below.
 * `data/polymod`
 	- [this directory starts empty, but has files generated in it by the scripts]
 
@@ -60,10 +60,10 @@ We try to give a rough sense for expected runtime below.
 * `23-plot_model_predictions_by_covars` - TODO 
 * `30-contact-matrices` - TODO 
 * `31-prep-estimate-R0-bootstrap` - this prepares the dataset that is used for the epidemiological analyses
-* `32-estimate-R0` - this file generates age-structured contact matrices from the survey data and the corresponding R<sub>0 estimates 
+* `32-estimate-R0` - this file generates age-structured contact matrices from the survey data and the corresponding R<sub>0</sub> estimates 
 * `33-sensitivity-estimate-R0-onlycc` - this file assesses the sensitivity of the R<sub>0</sub> estimates  to including / not including physical contact in Waves 1 and 2
 * `34-sensitivity-high-low-baselineR0` - this file assesses the sensitivity of the R<sub>0</sub> estimates  to assuming higher and lower baseline values
-* `35-sensitivity-compare-with-Prem-matrix.Rmd` - this file compares the data from Feehan and Cobb (2019) with estimates from Prem *et al.* (2017) and the UK POLYMOD data from Mossong *et al* (2008)
+* `35-sensitivity-compare-with-Prem-matrix.Rmd` - this file compares the data from Feehan and Cobb (2019) with estimates from Prem *et al.* (2017) and the UK POLYMOD data from Mossong *et al.* (2008)
 
 Additionally, there are two files that have some miscellaneous helper functions:
 
