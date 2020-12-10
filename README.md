@@ -32,7 +32,7 @@ The data we provide are
 	- `fb_alters.csv` - detailed contacts reported in survey
 	- `fb_bootstrapped_weights.csv` - bootstrap weights to accompany fb_ego.csv
 * `data/prem_contact_matrix`
-	- `prem_usa.csv` - age-structured contact matrix for the United States from [Prem *et al.* (2017)] (https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697) **NOTE**: This data must be downloaded by you. See instructions below.
+	- `prem_usa.csv` - age-structured contact matrix for the United States from [Prem *et al.* (2017)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697) **NOTE**: This data must be downloaded by you. See instructions below.
 * `data/polymod`
 	- [this directory starts empty, but has files generated in it by the scripts]
 
