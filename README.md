@@ -61,8 +61,8 @@ We try to give a rough sense for expected runtime below.
 * `30-contact-matrices` - TODO 
 * `31-prep-estimate-R0-bootstrap` - this prepares the dataset that is used for the epidemiological analyses
 * `32-estimate-R0` - this file generates age-structured contact matrices from the survey data and the corresponding R<sub>0 estimates 
-* `33-sensitivity-estimate-R0-onlycc` - this file assesses the sensitivity of the R<sub>0 estimates  to including / not including physical contact in Waves 1 and 2
-* `34-sensitivity-high-low-baselineR0` - this file assesses the sensitivity of the R<sub>0;</sub> estimates  to assuming higher and lower baseline values
+* `33-sensitivity-estimate-R0-onlycc` - this file assesses the sensitivity of the R<sub>0</sub> estimates  to including / not including physical contact in Waves 1 and 2
+* `34-sensitivity-high-low-baselineR0` - this file assesses the sensitivity of the R<sub>0</sub> estimates  to assuming higher and lower baseline values
 * `35-sensitivity-compare-with-Prem-matrix.Rmd` - this file compares the data from Feehan and Cobb (2019) with estimates from Prem *et al.* (2017) and the UK POLYMOD data from Mossong *et al* (2008)
 
 Additionally, there are two files that have some miscellaneous helper functions:
