@@ -48,17 +48,17 @@ We try to give a rough sense for expected runtime below.
 
 * `00-run-all.R` - this file downloads the data and runs all of the scripts
 * `01-prep-wave-comparison-model` - this prepares a dataset that is later used in the models
-* `10-compare-waves` - this file analyzes the sample composition and marginal distributions of number of contacts, relationship, and location of contacts [this takes about TODO minutes to run]
-* `11-relationships` - TODO 
-* `12-locations` - TODO 
-* `13-figure` - TODO 
-* `14-sensitivity` - this file assesses the sensitivity of results to including / not including physical contact in Waves 1 and 2 [this takes about TODO minutes to run]
-* `15-avg-contacts` - TODO 
+* `10-compare-waves` - [TODO MINUTES] this file analyzes the sample composition and marginal distributions of number of contacts, relationship, and location of contacts 
+* `11-relationships` - this file calculates the share of reported contacts by wave and relationship 
+* `12-locations` - this file calculates the average number of reported contacts by wave and location 
+* `13-figure` - this file creates the figure out of the histograms, relationships, and locations 
+* `14-sensitivity` - [TODO MINUTES] this file assesses the sensitivity of results to including / not including physical contact in Waves 1 and 2 
+* `15-avg-contacts` - this file fits a model to estimate the average number of contacts by wave 
 * `12-model_mean_perwave` - this model estimates average number of contacts, accounting for censoring, using a model
-* `21-allcc_nb_censored_loaded_weighted` - this is the model for non-household contacts
-* `22-nonhhcc_nb_censored_loaded_weighted` - this is the model for all contacts
-* `23-plot_model_predictions_by_covars` - TODO 
-* `30-contact-matrices` - TODO 
+* `21-allcc_nb_censored_loaded_weighted` - this is the model for non-household contacts (with covariates)
+* `22-nonhhcc_nb_censored_loaded_weighted` - this is the model for all contacts (with covariates)
+* `23-plot_model_predictions_by_covars` - this file produces the plots that show model predictions 
+* `30-contact-matrices` - [TODO MINUTES] this file calculates the contact matrices
 * `31-prep-estimate-R0-bootstrap` - this prepares the dataset that is used for the epidemiological analyses
 * `32-estimate-R0` - this file generates age-structured contact matrices from the survey data and the corresponding R<sub>0</sub> estimates 
 * `33-sensitivity-estimate-R0-onlycc` - this file assesses the sensitivity of the R<sub>0</sub> estimates  to including / not including physical contact in Waves 1 and 2
