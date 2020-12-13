@@ -20,6 +20,7 @@ library(tictoc)
 
 library(gt)
 library(gtsummary)
+library(kableExtra)
 
 library(patchwork)
 
@@ -85,6 +86,7 @@ cur_conditions <- data.frame(wave=2,
 Plots from model predicting non-household contacts
 
 ```{r nonhh_coefs_plot, fig.height=5, fig.width=8}
+savescale <- 0.5
 fig.width <- 14 
 fig.height <- 7 
 
@@ -93,14 +95,39 @@ plots_nonhh <- plot_preds(models[[2]],
                           str_wrap("Predicted number of non-household contacts",30),
                           cur_conditions)
 
-comb_nonhh_coef_plot <- plots_nonhh$comb
+comb_nonhh_coef_plot <- plots_nonhh$comb & 
+  theme(text=element_text(size=8),
+          axis.text = element_text(size=6),
+        axis.title.y = element_text(size=6),
+        plot.tag.position=c(0.1,1.1)) 
+
 
 ggsave(file.path(out.dir, 'model_nonhh_covar_preds.png'),
        width=fig.width, height=fig.height,
-       comb_nonhh_coef_plot)
+       comb_nonhh_coef_plot,
+       scale=savescale)
 ggsave(file.path(out.dir, 'model_nonhh_covar_preds.pdf'),
        width=fig.width, height=fig.height,
-       comb_nonhh_coef_plot)
+       comb_nonhh_coef_plot,
+       scale=savescale)
+ggsave(file.path(out.dir, 'figure_2.pdf'),
+       width=fig.width, height=fig.height,
+       comb_nonhh_coef_plot,
+       scale=savescale)
+
+panelmap <- c('plot_dow'='a',
+              'plot_hhsize'='b',
+              'plot_agesex'='d',
+              'plot_raceethwave'='c',
+              'plot_citywave'='e')
+for(cp in names(plots_nonhh)[-1]) {
+  curdat <- plots_nonhh[[cp]]$data %>%
+    select(-num_cc_nonhh, -is_topcoded_cc_nonhh)
+  write_csv(plots_nonhh[[cp]]$data,
+            file.path(out.dir, glue::glue("figure_2{sub}_model_nonhh_covar_preds_{cp}_data.csv",
+                                          sub=panelmap[cp])))
+}
+
 
 comb_nonhh_coef_plot
 ```
@@ -125,6 +152,22 @@ ggsave(file.path(out.dir, 'model_all_covar_preds.png'),
 ggsave(file.path(out.dir, 'model_all_covar_preds.pdf'),
        width=fig.width, height=fig.height,
        comb_all_coef_plot)
+ggsave(file.path(out.dir, 'figure_S2.pdf'),
+       width=fig.width, height=fig.height,
+       comb_all_coef_plot)
+
+panelmap <- c('plot_dow'='a',
+              'plot_hhsize'='b',
+              'plot_agesex'='d',
+              'plot_raceethwave'='c',
+              'plot_citywave'='e')
+for(cp in names(plots_all)[-1]) {
+  curdat <- plots_all[[cp]]$data %>%
+    select(-num_cc, -is_topcoded_cc)
+  write_csv(plots_all[[cp]]$data,
+            file.path(out.dir, glue::glue("figure_S2{sub}_model_all_covar_preds_{cp}_data.csv",
+                                          sub=panelmap[cp])))
+}
 
 comb_all_coef_plot
 ```
@@ -213,11 +256,13 @@ Compare coefs across the two models
 fig.width <- 6
 fig.height <- 6
 
-comp_coefs <- bind_cols(fe_all %>% select(Coefficient, est_all=Estimate),
+comp_coefs_df <- bind_cols(fe_all %>% select(Coefficient, est_all=Estimate),
                         fe_nonhh %>% select(est_nonhh=Estimate)) %>%
   # remove reference categories
   filter(! is.na(est_all)) %>%
-  relabel_coefs_table('Coefficient') %>%
+  relabel_coefs_table('Coefficient')
+
+comp_coefs <- comp_coefs_df %>%
   ggplot(.) +
   geom_point(aes(x=est_all,
                  y=est_nonhh,
@@ -235,6 +280,12 @@ ggsave(file.path(out.dir, 'model_covar_compare.png'),
 ggsave(file.path(out.dir, 'model_covar_compare.pdf'),
        width=fig.width, height=fig.height,
        comp_coefs)
+ggsave(file.path(out.dir, 'figure_S3.pdf'),
+       width=fig.width, height=fig.height,
+       comp_coefs)
+
+write_csv(comp_coefs_df,
+          file.path(out.dir, glue::glue("figure_S3_model_covar_compare.csv")))
 
 comp_coefs
 ```

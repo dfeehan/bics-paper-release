@@ -294,6 +294,9 @@ plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "Baseline",
               ci_high = ci_R0_est_polymod_baseline[[4]][2])) %>%
   mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
 
+write.csv(plot_df_r0_ci, file = here("bics-paper-code", "out","figure_S5_R0_figure_onlycc.csv"), row.names = FALSE)
+
+
 R0plot <- plot_df_r0_ci %>% 
   ggplot(aes(x=type, y = r0, group = comparison, color = comparison)) +
   scale_color_manual(name = "Relative to", values = c("black", "blue", "maroon")) +
@@ -306,6 +309,8 @@ R0plot <- plot_df_r0_ci %>%
 
 ggsave(R0plot, file = here("bics-paper-code", "out", "R0_figure_onlycc.png"), width = 6, height = 4)
 ggsave(R0plot, file = here("bics-paper-code", "out", "R0_figure_onlycc.pdf"), width = 6, height = 4)
+ggsave(R0plot, file = here("bics-paper-code", "out", "figure_S5.pdf"), width = 6, height = 4)
+
 
 R0plot
 

@@ -57,8 +57,14 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
   sex_fill  <- scale_fill_brewer(name='Gender',  palette='Set1')
   sex_color <- scale_color_brewer(name='Gender', palette='Set1')
   
+  wrap_x <- scale_x_discrete(labels=function(x) str_wrap(x, width=13))
+  
+  cat_args <- list(size=1)
+  
   ce_hhsize <- conditional_effects(cur_mod, "w_hhsize", conditions=cur_conditions)
-  plot_hhsize <- plot(ce_hhsize, plot=FALSE) 
+  plot_hhsize <- plot(ce_hhsize, 
+                      cat_args = list(size=1),
+                      plot=FALSE)
   plot_hhsize <- plot_hhsize[[1]] + 
     expand_limits(y=0) +
     xlab("Household Size") +
@@ -66,7 +72,9 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
     wave_color + wave_fill
   
   ce_dow <- conditional_effects(cur_mod, "reference_weekday", conditions=cur_conditions)
-  plot_dow <- plot(ce_dow, plot=FALSE) 
+  plot_dow <- plot(ce_dow, 
+                   cat_args = list(size=1),
+                   plot=FALSE) 
   plot_dow <- plot_dow[[1]] + 
     expand_limits(y=0) +
     xlab("Day of Week") +
@@ -74,7 +82,9 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
     wave_color + wave_fill 
   
   ce_agesex <- conditional_effects(cur_mod, "agecat_w0:gender", conditions=cur_conditions)
-  plot_agesex <- plot(ce_agesex, plot=FALSE) 
+  plot_agesex <- plot(ce_agesex, 
+                      cat_args = list(size=1),
+                      plot=FALSE) 
   plot_agesex <- plot_agesex[[1]] + 
     expand_limits(y=0) +
     xlab("Age") +
@@ -88,7 +98,9 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
     filter(! (effect2__ == "Philadelphia" & effect1__ == "0")) %>%
     filter(! (effect1__ == "Philadelphia" & effect2__ == "0"))
     
-  plot_citywave <- plot(ce_citywave_toplot, plot=FALSE) 
+  plot_citywave <- plot(ce_citywave_toplot, 
+                        cat_args = list(size=1),
+                        plot=FALSE) 
   plot_citywave <- plot_citywave[[1]] + 
     wave_color +
     wave_fill +
@@ -108,7 +120,9 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
     filter(effect2__ != "(Unknown)") %>%
     filter(effect1__ != "(Unknown)")
   
-  plot_raceethwave <- plot(ce_raceethwave_toplot, plot=FALSE) 
+  plot_raceethwave <- plot(ce_raceethwave_toplot, 
+                           cat_args = list(size=1),
+                           plot=FALSE) 
   plot_raceethwave <- plot_raceethwave[[1]] + 
     wave_color +
     wave_fill +
@@ -116,6 +130,7 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
     xlab("Race/Ethnicity") +
     ylab(cur_ylab) +
     theme(legend.position='bottom') +
+    wrap_x +
     NULL
   
   comb_ylim <- range(c(ce_raceethwave_toplot[[1]]$upper__,
@@ -137,7 +152,7 @@ plot_preds <- function(cur_mod, cur_ylab, cur_conditions=NULL) {
      plot_agesex + 
      plot_citywave & ylim(0,ceiling(comb_ylim[2]))) +
     plot_layout(design=design) +
-    plot_annotation(tag_levels='A') +
+    plot_annotation(tag_levels='a') +
     NULL
   
   return(list(comb = comb_plot,

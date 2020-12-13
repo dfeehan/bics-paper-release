@@ -107,30 +107,31 @@ toc()
 dodge_amt <- .8
 
 plot_relationships_avgpp_withci <- ggplot(alter_rel_avgpp_summ) +
-  geom_col(aes(x=var, y=avg_pp, fill=wave),
-           position=position_dodge(dodge_amt)) +
-  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
-                    # this is odd -- for position_dodge to work with the error bars,
-                    # need to have the fill aesthetc set (even though there's no fill for
-                    # error bars)
-                    fill=wave),
-                width=.2,
+  geom_pointrange(aes(x=var, y=avg_pp, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high, color=wave),
                 position=position_dodge(dodge_amt)) +
+  #geom_col(aes(x=var, y=avg_pp, fill=wave),
+  #         position=position_dodge(dodge_amt)) +
+  #geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+  #                  # this is odd -- for position_dodge to work with the error bars,
+  #                  # need to have the fill aesthetc set (even though there's no fill for
+  #                  # error bars)
+  #                  fill=wave),
+  #              width=.2,
+  #              position=position_dodge(dodge_amt)) +
   xlab("") +
   labs(caption=str_wrap("* NB: Added to the instrument after Wave 0", width=55)) +
   ylab(str_wrap("Avg. number of non-household contacts", width=20)) +
   scale_x_discrete(labels = function(x) str_wrap(x, width=10)) +
-  #coord_flip() +
-  #facet_grid(. ~ wave) +
   theme(axis.text.x = element_text(size=rel(.9))) +
-  #      legend.position='bottom') +
-  #theme(legend.position=c(0,-.4), legend.direction='horizontal') +
   theme(plot.caption = element_text(size=rel(0.7))) +
-  guides(fill=FALSE) +
-  wave_fill +
+  #guides(fill=FALSE) +
+  #wave_fill +
+  guides(color=FALSE) +
+  wave_color +
   NULL
 
 saveRDS(plot_relationships_avgpp_withci, file.path(out.dir, 'plot_relationships.rds'))
+write_csv(alter_rel_avgpp_summ, file.path(out.dir, 'figure_1c_plot_relationships_data.csv'))
 
 plot_relationships_avgpp_withci
 ```

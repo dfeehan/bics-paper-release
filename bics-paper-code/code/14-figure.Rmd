@@ -50,8 +50,10 @@ plot_locations_avgpp_withci <- readRDS(file.path(out.dir, 'plot_locations.rds'))
 ## Figure with histograms / relationship and location on top of each other
 
 ```{r rel_loc_combo_plot, fig.height=5, fig.width=8}
-fig.width <- 16 
-fig.height <- 8 
+#savescale <- 0.5
+savescale <- 0.5 
+fig.width <- 16
+fig.height <- 8
 
 design <- "
    123333
@@ -59,17 +61,30 @@ design <- "
 "
 
 comb_lr_plot <- 
-  (hist_all + hist_nonhh & guides(fill=FALSE)) +
-  plot_relationships_avgpp_withci + plot_locations_avgpp_withci +
+  (((hist_all + hist_nonhh & guides(fill=FALSE)) +
+    plot_relationships_avgpp_withci + 
+    (plot_locations_avgpp_withci & 
+       theme(legend.position=c(0.1,-.5), 
+             legend.direction='horizontal',
+             plot.tag.position=c(0,1.2)) ) & 
+    theme(text=element_text(size=8),
+          axis.text = element_text(size=8),
+          axis.title.y = element_text(size=6)))) +
   plot_layout(design=design) +
-  plot_annotation(tag_levels='A') +
-  NULL
+  plot_annotation(tag_levels='a') 
 
 ggsave(file.path(out.dir, 'hists_relationships_locations_avgpp_withci.png'),
      width=fig.width, height=fig.height,
+     scale=savescale,
      comb_lr_plot)
 ggsave(file.path(out.dir, 'hists_relationships_locations_avgpp_withci.pdf'),
      width=fig.width, height=fig.height,
+     scale=savescale,
+     comb_lr_plot)
+# call a version figure 1 for simplicity
+ggsave(file.path(out.dir, 'figure_1.pdf'),
+     width=fig.width, height=fig.height,
+     scale=savescale,
      comb_lr_plot)
 
 comb_lr_plot

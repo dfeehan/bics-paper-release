@@ -120,6 +120,7 @@ Compare with the Feehan and Cobb (2019) study i.e. the baseline used in the pape
 
 ```{r}
 # Get polymod and FB data
+polymod_country = "United Kingdom"
 polymod_mat_fb_age <- getPolymodMatrix(polymod_country = polymod_country,
                                 polymod_age_limits= c(0, 15, 25, 35, 45,  65))
 
@@ -154,10 +155,17 @@ survey_mat_youngest_added_fb<- filled_matrix_fb$survey_mat_youngest_added
 
 
 ```{r}
-prem_fb_age_mixplot <- prem_mat_fb_age %>%
+prem_fb_age_mixplot_data <- prem_mat_fb_age %>%
   mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
                              ego_age == "[65,100]" ~ "[65,100]*",
-                             TRUE ~ as.character(ego_age))) %>%
+                             TRUE ~ as.character(ego_age)))
+
+write.csv(prem_fb_age_mixplot_data, file = here("bics-paper-code", "out","figure_S7a_compare_w_prem_a_prem.csv"), row.names = FALSE)
+
+xlabel <- "Age of participant"
+ylabel <- "Age of contact"
+
+prem_fb_age_mixplot <- prem_fb_age_mixplot_data %>%
   ggplot(.) + 
   geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
   theme_classic(base_size = 8) +
@@ -169,11 +177,15 @@ prem_fb_age_mixplot <- prem_mat_fb_age %>%
   ggtitle("Prem et al. (2017)")
   
 
-fb_mixplot <- mix_plot_filled_in_fb <- melt(survey_mat_youngest_added_fb) %>%
+fb_mixplot_data <- melt(survey_mat_youngest_added_fb) %>%
   rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
   mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
                              ego_age == "[65,100]" ~ "[65,100]*",
-                             TRUE ~ as.character(ego_age))) %>%
+                             TRUE ~ as.character(ego_age)))
+
+write.csv(fb_mixplot_data, file = here("bics-paper-code", "out","figure_S7b_compare_w_prem_b_feehan.csv"), row.names = FALSE)
+
+fb_mixplot <-  fb_mixplot_data %>%
   ggplot(.) + 
   geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
   theme_classic(base_size = 8) +
@@ -184,11 +196,14 @@ fb_mixplot <- mix_plot_filled_in_fb <- melt(survey_mat_youngest_added_fb) %>%
   viridis::scale_fill_viridis(name="Average \nnumber \nof contacts", limits=c(0, 10)) +
   ggtitle("Feehan and Cobb (2019)")
 
-
-polymod_mixplot <- melt(polymod_mat_fb_age, varnames = c("ego_age", "alter_age"), value.name = "contacts") %>%
+polymod_mixplot_data <- melt(polymod_mat_fb_age, varnames = c("ego_age", "alter_age"), value.name = "contacts")%>%
     mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
                              ego_age == "[65,100]" ~ "[65,100]*",
-                             TRUE ~ as.character(ego_age))) %>%
+                             TRUE ~ as.character(ego_age))) 
+write.csv(polymod_mixplot_data, file = here("bics-paper-code", "out","figure_S7c_compare_w_prem_c_polymod.csv"), row.names = FALSE)
+
+
+polymod_mixplot <- polymod_mixplot_data %>%
   ggplot(.) + 
   geom_tile(aes(x=ego_age, y=alter_age, fill=contacts)) +
   theme_classic(base_size = 8) +
@@ -207,13 +222,16 @@ fb_tmp <- melt(survey_mat_youngest_added_fb) %>%
 polymod_tmp <- melt(polymod_mat_fb_age, varnames = c("ego_age", "alter_age"), value.name = "sym_avg_per_ego") %>%
   mutate(type = "POLYMOD")
 
-barplot <- rbind(prem_mat_fb_age ,fb_tmp, polymod_tmp) %>%
+barplot_data <- rbind(prem_mat_fb_age ,fb_tmp, polymod_tmp) %>%
   filter(!is.na(alter_age)) %>%
   group_by(ego_age, type) %>%
   summarize(average = sum(sym_avg_per_ego, na.rm = TRUE)) %>%
   mutate(ego_age = case_when(ego_age == "[65,80]" ~ "[65,80]*",
                              ego_age == "[65,100]" ~ "[65,100]*",
-                             TRUE ~ as.character(ego_age))) %>%
+                             TRUE ~ as.character(ego_age)))
+write.csv(barplot_data, file = here("bics-paper-code", "out","figure_S7d_compare_w_prem_d_barplot.csv"), row.names = FALSE)
+
+barplot <- barplot_data %>%
   ggplot(.) +
   geom_col(aes(x = as.factor(ego_age), y = average, fill = type),position = position_dodge()) +
   theme_classic(base_size = 8) +
@@ -230,18 +248,19 @@ plt1 <- ggpubr::ggarrange(prem_fb_age_mixplot + theme(legend.position="none"),
                   polymod_mixplot + theme(legend.position = "none"),
                   barplot + theme(legend.position="none"),
                   ncol = 4,nrow = 1,
-                  labels = c("A", "B", "C", "D"))
+                  labels = c("a", "b", "c", "d"))
 legends <- plot_grid(leg1, get_legend(fb_mixplot + theme(legend.position = "none")),get_legend(fb_mixplot + theme(legend.position = "none")), leg2, nrow = 1)
 mat_plot_prem_fb <- ggpubr::ggarrange(plt1, legends,
                               nrow = 2, heights = c(9,1)) 
 mat_plot_prem_fb_final <- ggpubr::annotate_figure(mat_plot_prem_fb,
                                           bottom = ggpubr::text_grob("* NB: Oldest age groups defined differently across studies", color = "black",
-                                                                     hjust = 1, x = 1, face  = "bold", size = 8))
+                                                                     hjust = 1, x = 1, size = 8))
 
 mat_plot_prem_fb_final
 
-ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare-w-prem.png"), width = 9, height = 5)
-ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare-w-prem.pdf"), width = 9, height = 5)
+ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare_w_prem.png"), width = 9, height = 5)
+ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","compare_w_prem.pdf"), width = 9, height = 5)
+ggsave(mat_plot_prem_fb_final, file = here("bics-paper-code", "out","figure_S7.pdf"), width = 9, height = 5)
 
 
 ```

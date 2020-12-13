@@ -17,6 +17,7 @@ library(reshape2)
 library(ipumsr)
 library(grid)
 library(extrafont)
+library(glue)
 
 # load some functions
 source(here('bics-paper-code', 'code', 'utils.R'))
@@ -191,67 +192,6 @@ for (n in 1:num_waves){
 ```
 
 
-Plot \(R_0\) estimates
-
-```{r}
-plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "Baseline", 
-                                     r0 = baseline_R0, 
-                                     ci_low = baseline_R0 - 1.96*baseline_R0_SE, 
-                                     ci_high = baseline_R0 + 1.96*baseline_R0_SE)) %>%
-  rbind(cbind(type = "Wave 0", comparison = "FB",
-              r0 = R0_est_fb_baseline[[1]], 
-              ci_low = ci_R0_est_fb_baseline[[1]][1], 
-              ci_high = ci_R0_est_fb_baseline[[1]][2])) %>%
-  rbind(cbind(type = "Wave 1", comparison = "FB",
-              r0 = R0_est_fb_baseline[[2]], 
-              ci_low = ci_R0_est_fb_baseline[[2]][1], 
-              ci_high = ci_R0_est_fb_baseline[[2]][2])) %>%
-  rbind(cbind(type = "Wave 2", comparison = "FB",
-              r0 = R0_est_fb_baseline[[3]], 
-              ci_low = ci_R0_est_fb_baseline[[3]][1], 
-              ci_high = ci_R0_est_fb_baseline[[3]][2])) %>%
-  rbind(cbind(type = "Wave 3", comparison = "FB",
-              r0 = R0_est_fb_baseline[[4]], 
-              ci_low = ci_R0_est_fb_baseline[[4]][1], 
-              ci_high = ci_R0_est_fb_baseline[[4]][2])) %>%
-  rbind(cbind(type = "Wave 0", comparison = "POLYMOD",
-              r0 = R0_est_polymod_baseline[[1]], 
-              ci_low = ci_R0_est_polymod_baseline[[1]][1], 
-              ci_high = ci_R0_est_polymod_baseline[[1]][2])) %>%
-  rbind(cbind(type = "Wave 1", comparison = "POLYMOD",
-              r0 = R0_est_polymod_baseline[[2]], 
-              ci_low = ci_R0_est_polymod_baseline[[2]][1], 
-              ci_high = ci_R0_est_polymod_baseline[[2]][2])) %>%
-  rbind(cbind(type = "Wave 2", comparison = "POLYMOD",
-              r0 = R0_est_polymod_baseline[[3]], 
-              ci_low = ci_R0_est_polymod_baseline[[3]][1], 
-              ci_high = ci_R0_est_polymod_baseline[[3]][2])) %>%
-  rbind(cbind(type = "Wave 3", comparison = "POLYMOD",
-              r0 = R0_est_polymod_baseline[[4]], 
-              ci_low = ci_R0_est_polymod_baseline[[4]][1], 
-              ci_high = ci_R0_est_polymod_baseline[[4]][2])) %>%
-  mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
-
-R0plot <- plot_df_r0_ci %>% 
-  ggplot(aes(x=type, y = r0, group = comparison, color = comparison)) +
-  scale_color_manual(name = "Relative to", values = c("black", "blue", "maroon")) +
-  geom_errorbar(width=.1, aes(ymin=ci_low, ymax=ci_high), position=position_dodge(width=0.5)) +
-  geom_point(shape=19, size=3, fill="white", position=position_dodge(width=0.5)) +
-  geom_hline(yintercept = 1, col = "black", linetype = "dotted")+
-  labs(y = expression(R[0]~estimate), x = "")+
-  theme_classic(base_size = 8) +
-  theme(legend.position="bottom")
-
-
-
-ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure.png"), width = 6, height = 4)
-ggsave(R0plot, file = here("bics-paper-code", "out","R0_figure.pdf"), width = 6, height = 4)
-
-R0plot
-
-
-```
-
 Plot age-structured contact matrices
 
 ```{r}
@@ -261,12 +201,18 @@ ylabel <- "Age of contact"
 mix_plot_filled_in_BICS <- list()
 
 for (n in 1:num_waves) {
-  mix_plot_filled_in_BICS[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+  tmp <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
     rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
     mutate(ego_age = case_when(ego_age == "[0,18)" ~ "[0,18)*",
                                TRUE ~ as.character(ego_age)),
            alter_age = case_when(alter_age == "[0,18)" ~ "[0,18)*",
-                                 TRUE ~ as.character(alter_age))) %>%
+                                 TRUE ~ as.character(alter_age)))
+  write.csv(tmp, 
+            file = here("bics-paper-code","out",
+                         glue::glue("figure_3{sublet}_matrices_bics_contact_matrix_w{n-1}.csv",
+                                    sublet=letters[n])), 
+            row.names = FALSE)
+  mix_plot_filled_in_BICS[[n]] <- tmp %>%
     ggplot(.) + 
     geom_tile(aes(x=ego_age, y=alter_age, fill=sym_avg_per_ego)) +
     theme_classic(base_size = 8) +
@@ -290,7 +236,7 @@ fb_tmp <- melt(survey_mat_youngest_added_fb) %>%
 
 
 for (n in 1:num_waves) {
-  mix_plot_BICS_FB_compare[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+  tmp <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
     rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego_BICS = value) %>%
     filter(!(ego_age %in% c("[0,18)", "[18,25)") & alter_age %in% c("[0,18)", "[18,25)")))  %>%
     mutate(ego_age = case_when(ego_age == "[0,18)" ~ "[0,18)**",
@@ -300,7 +246,15 @@ for (n in 1:num_waves) {
                                  alter_age == "[18,25)" ~ "[18,25)**",
                                  TRUE ~ as.character(alter_age))) %>%
     left_join(.,fb_tmp) %>%
-    mutate(diff = sym_avg_per_ego - sym_avg_per_ego_BICS) %>%
+    mutate(diff = sym_avg_per_ego - sym_avg_per_ego_BICS) %>% select(ego_age, alter_age, diff)
+  
+  write.csv(tmp, 
+            file = here("bics-paper-code","out",
+                        glue::glue("figure_3{sublet}_matrices_diff_compare_baseline_contact_matrix_w{n-1}.csv",
+                                   sublet=letters[4+n])), 
+            row.names = FALSE)
+  
+  mix_plot_BICS_FB_compare[[n]] <- tmp %>%
     ggplot(.) + 
     geom_tile(aes(x=ego_age, y=alter_age, fill=diff)) +
     theme_classic(base_size = 8) +
@@ -342,7 +296,8 @@ for (n in 1:num_waves) {
   ci_BICS <- as.data.frame(cbind(ego_age = agegroups_BICS, ci_low = ci_low_BICS, ci_high = ci_high_BICS, type = "BICS")) 
   ci_all <- rbind(ci_BICS, ci_fb)
   
-  mix_plot_BICS_FB_compare_2[[n]] <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
+  
+  tmp <- melt(survey_mat_youngest_added_BICS[[n]]) %>%
     rename(ego_age = Var1, alter_age = Var2, sym_avg_per_ego = value) %>%
     mutate(type = "BICS") %>%
     rbind(.,fb_tmp) %>%
@@ -355,9 +310,16 @@ for (n in 1:num_waves) {
                                TRUE ~ as.character(ego_age))) %>%
     filter(!(ego_age %in% c("[0,15)", "[15,25)"))) %>%
     mutate(ci_high = as.numeric(as.character(ci_high)),
-           ci_low = as.numeric(as.character(ci_low))) %>%
+           ci_low = as.numeric(as.character(ci_low))) %>% select(ego_age, average, type, ci_low, ci_high)
     
-    
+    write.csv(tmp, 
+              file = here("bics-paper-code","out",
+                          glue::glue("figure_3{sublet}_matrices_barplot_compare_baseline_contact_matrix_w{n-1}.csv",
+                                     sublet=letters[8+n])),
+              row.names = FALSE)
+  
+  mix_plot_BICS_FB_compare_2[[n]] <- tmp %>%
+
     ggplot(.) +
     geom_col(aes(x = ego_age, y = average, fill = type),position = position_identity()) +
     geom_errorbar(aes(x = ego_age, ymin=ci_low, ymax=ci_high, fill = type), width = 0.2) +
@@ -386,7 +348,7 @@ plt1 <- ggpubr::ggarrange(mix_plot_filled_in_BICS[[1]] + theme(legend.position="
                           mix_plot_BICS_FB_compare[[4]]+ theme(legend.position="none"),
                           mix_plot_BICS_FB_compare_2[[4]]+ theme(legend.position="none"),
                           ncol = 3,nrow = 4,
-                          labels = c("A", "E", "I", "B", "F", "J", "C", "G", "K", "D", "H", "L"))
+                          labels = c("a", "e", "i", "b", "f", "j", "c", "g", "k", "d", "h", "l"))
 
 
 
@@ -401,8 +363,12 @@ mat_plot_final <- ggpubr::annotate_figure(mat_plot,
 
 ggsave(mat_plot_final, file = here("bics-paper-code","out", "matrices.png"), width = 8, height = 9)
 ggsave(mat_plot_final, file = here("bics-paper-code","out", "matrices.pdf"), width = 8, height = 9)
+ggsave(mat_plot_final, file = here("bics-paper-code","out", "figure_3.pdf"), width = 8, height = 9)
 
 mat_plot_final
+
+
+
 ```
 
 
@@ -490,7 +456,7 @@ for (n in 1:3) {
 ```
 
 
-Recreat R0 plot, showing both all contacts and contacts where no mask usage was recorded
+R0 plot, showing both all contacts and contacts where no mask usage was recorded
 
 
 ```{r}
@@ -557,6 +523,8 @@ plot_df_r0_ci <- as.data.frame(cbind(type = "Baseline", comparison = "Baseline",
               ci_high = ci_R0_est_polymod_baseline_nomask[[3]][2])) %>%
   mutate(r0 = as.numeric(as.character(r0)), ci_low = as.numeric(as.character(ci_low)), ci_high=as.numeric(as.character(ci_high)))
 
+write.csv(plot_df_r0_ci, file = here("bics-paper-code", "out","figure_4_R0_figure_w_no_mask.csv"), row.names = FALSE)
+
 R0plot <- plot_df_r0_ci %>% 
   ggplot(aes(x=type, y = r0, group = group, color = comparison, shape = contacts)) +
   scale_color_manual(name = "Relative to", values = c("black", "blue",  "maroon")) +
@@ -575,6 +543,7 @@ R0plot_final <- ggpubr::annotate_figure(R0plot,
 
 ggsave(R0plot_final, file = here("bics-paper-code", "out","R0_figure_w_no_mask.png"), width = 6, height = 4)
 ggsave(R0plot_final, file = here("bics-paper-code", "out","R0_figure_w_no_mask.pdf"), width = 6, height = 4)
+ggsave(R0plot_final, file = here("bics-paper-code", "out","figure_4.pdf"), width = 6, height = 4)
 
 R0plot_final
 

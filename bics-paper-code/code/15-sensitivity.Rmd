@@ -112,15 +112,17 @@ fig.height <- 5
 
 
 plot_relationships_onlycc_avgpp_withci <- ggplot(alter_rel_onlycc_avgpp_summ) +
-  geom_col(aes(x=var, y=avg_pp, fill=wave),
-           position=position_dodge(dodge_amt)) +
-  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
-                    # this is odd -- for position_dodge to work with the error bars,
-                    # need to have the fill aesthetc set (even though there's no fill for
-                    # error bars)
-                    fill=wave),
-                width=.2,
-                position=position_dodge(dodge_amt)) +
+  geom_pointrange(aes(x=var, y=avg_pp, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high, color=wave),
+                position=position_dodge(dodge_amt)) +  
+  #geom_col(aes(x=var, y=avg_pp, fill=wave),
+  #         position=position_dodge(dodge_amt)) +
+  #geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+  #                  # this is odd -- for position_dodge to work with the error bars,
+  #                  # need to have the fill aesthetc set (even though there's no fill for
+  #                  # error bars)
+  #                  fill=wave),
+  #              width=.2,
+  #              position=position_dodge(dodge_amt)) +
   xlab("") +
   labs(caption=str_wrap("* NB: Added to the instrument after Wave 0", width=55)) +
   ylab(str_wrap("Avg. number of non-household contacts (conversational contact only)", width=20)) +
@@ -131,11 +133,14 @@ plot_relationships_onlycc_avgpp_withci <- ggplot(alter_rel_onlycc_avgpp_summ) +
   #      legend.position='bottom') +
   #theme(legend.position=c(0,-.4), legend.direction='horizontal') +
   theme(plot.caption = element_text(size=rel(0.7))) +
-  guides(fill=FALSE) +
-  wave_fill +
+  #guides(fill=FALSE) +
+  #wave_fill +
+  guides(color=FALSE) +
+  wave_color +
   NULL
 
 saveRDS(plot_relationships_onlycc_avgpp_withci, file.path(out.dir, 'plot_relationships_onlycc.rds'))
+write_csv(alter_rel_onlycc_avgpp_summ, file.path(out.dir, 'figure_S4a_plot_relationships_onlycc_data.csv'))
 
 ggsave(file.path(out.dir, 'relationships_avgpp_onlycc_withci.png'),
        width=fig.width, height=fig.height,
@@ -207,6 +212,7 @@ alter_loc_onlycc_avgpp_summ <- df_boot_alters %>%
 toc()
 ```
 
+
 ```{r loc_hist}
 fig.width <- 8
 fig.height <- 5
@@ -214,28 +220,32 @@ fig.height <- 5
 dodge_amt <- 0.8
 
 plot_locations_onlycc_avgpp_withci <- ggplot(alter_loc_onlycc_avgpp_summ) +
-  geom_col(aes(x=var, y=avg_pp, fill=wave),
-           position=position_dodge(dodge_amt)) +
-  geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
-                  # this is odd -- for position_dodge to work with the error bars,
-                  # need to have the fill aesthetic set (even though there's no fill for
-                  # error bars)
-                  fill=wave),
-              width=.2,
-              position=position_dodge(dodge_amt)) +
+  geom_pointrange(aes(x=var, y=avg_pp, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high, color=wave),
+              position=position_dodge(dodge_amt)) +  
+  #geom_col(aes(x=var, y=avg_pp, fill=wave),
+  #         position=position_dodge(dodge_amt)) +
+  #geom_errorbar(aes(x=var, ymin=avg_pp_ci_low, ymax=avg_pp_ci_high,
+  #                # this is odd -- for position_dodge to work with the error bars,
+  #                # need to have the fill aesthetic set (even though there's no fill for
+  #                # error bars)
+  #                fill=wave),
+  #            width=.2,
+  #            position=position_dodge(dodge_amt)) +
   xlab("") +
   labs(caption=str_wrap("NB: *wording for this response changed after Wave 0", width=55)) +
   ylab(str_wrap("Avg. number of non-household contacts (conversational contact only)", width=20)) +
   scale_x_discrete(labels = function(x) str_wrap(x, width=10)) +
-  wave_fill +
+  #wave_fill +
+  wave_color +
   theme(axis.text.x = element_text(size=rel(.9))) +
-  theme(legend.position=c(0.1,-.35), legend.direction='horizontal') +
+  #theme(legend.position=c(0.1,-.35), legend.direction='horizontal') +
+  theme(legend.position=c(0.1,-.3), legend.direction='horizontal') +
   theme(plot.caption = element_text(size=rel(0.7))) +
   NULL
 
 
 saveRDS(plot_locations_onlycc_avgpp_withci, file.path(out.dir, 'plot_locations_onlycc.rds'))
-
+write_csv(alter_loc_onlycc_avgpp_summ, file.path(out.dir, 'figure_S4b_plot_locations_onlycc_data.csv'))
 
 ggsave(file.path(out.dir, 'locations_avgpp_onlycc_withci.png'),
      width=fig.width, height=fig.height,
@@ -246,6 +256,7 @@ ggsave(file.path(out.dir, 'locations_avgpp_onlycc_withci.pdf'),
 
 plot_locations_onlycc_avgpp_withci
 ```
+
 ```{r rel_loc_sens_combo_plot, fig.height=5, fig.width=8}
 fig.width <- 7.5 
 fig.height <- 6 
@@ -271,6 +282,9 @@ ggsave(file.path(out.dir, 'hists_relationships_locations_onlycc_avgpp_withci.png
      width=fig.width, height=fig.height,
      comb_lr_plot)
 ggsave(file.path(out.dir, 'hists_relationships_locations_onlycc_avgpp_withci.pdf'),
+     width=fig.width, height=fig.height,
+     comb_lr_plot)
+ggsave(file.path(out.dir, 'figure_S4.pdf'),
      width=fig.width, height=fig.height,
      comb_lr_plot)
 

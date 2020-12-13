@@ -104,7 +104,7 @@ df_fracs <- map_dfr(covars,
                     })
 
 
-df_fracs_plot <- df_fracs %>%
+df_fracs_plot_df <- df_fracs %>%
   mutate(variable = case_when(
                               variable == 'gender' ~ 'Other',
                               variable == 'weekday' ~ 'Other',
@@ -119,8 +119,9 @@ df_fracs_plot <- df_fracs %>%
                               TRUE ~ variable)) %>%
   # don't need both levels of dichotomous vars
   filter(level != 'Female') %>%
-  filter(level != 'Weekend') %>%
-  ggplot(.) +
+  filter(level != 'Weekend') 
+
+df_fracs_plot <-  ggplot(df_fracs_plot_df) +
   geom_point(aes(x=frac_weighted, y=level, color='Weighted')) +
   geom_point(aes(x=frac_unweighted, y=level, color='Unweighted')) +
   geom_segment(aes(xend=frac_weighted, x=frac_unweighted, y=level, yend=level),
@@ -149,6 +150,12 @@ ggsave(file.path(out.dir, 'weighted_and_unweighted.png'),
 ggsave(file.path(out.dir, 'weighted_and_unweighted.pdf'),
        width=fig.width, height=fig.height,
        df_fracs_plot)
+ggsave(file.path(out.dir, 'figure_5.pdf'),
+       width=fig.width, height=fig.height,
+       df_fracs_plot)
+
+write_csv(df_fracs_plot_df,
+          file.path(out.dir, 'figure_5_weighted_and_unweighted_data.csv'))
 
 df_fracs_plot
 ```
@@ -424,11 +431,30 @@ df_forhist <- df %>%
          qty = case_when(name == 'plot_num_cc' ~ 'All contacts',
                           name == 'plot_num_cc_nonhh' ~ 'Non-hh contacts'))
 
+## calculate median numbers of contacts by wave
+
 df_forhist_med_all <- df_forhist %>%
   filter(name == 'plot_num_cc') %>%
   group_by(wave) %>%
   summarize(med = median(value),
             wgt_med = Hmisc::wtd.quantile(value, weight_pooled, probs=0.5))
+
+## save data for histogram (journal requires this)
+
+df_hist_all <- df_forhist %>%
+  filter(qty == 'All contacts') %>%
+  group_by(wave, value) %>%
+  summarize(wgt_tot = sum(weight_pooled)) %>%
+  ungroup() %>%
+  group_by(wave) %>%
+  mutate(density = wgt_tot / sum(wgt_tot)) %>%
+  select(-wgt_tot) %>%
+  ungroup()
+  
+write_csv(df_hist_all,
+          file.path(out.dir, "figure_1a_num_cc_hist_data.csv"))
+
+## make the actual histogram
 
 hist_all <- df_forhist %>%
   filter(qty == 'All contacts') %>%
@@ -448,11 +474,30 @@ hist_all <- df_forhist %>%
         plot.title=element_text(size=rel(0.8))) +
   NULL
 
+## calculate median numbers of non-hh contacts by wave
+
 df_forhist_med_nonhh <- df_forhist %>%
   filter(name == 'plot_num_cc_nonhh') %>%
   group_by(wave) %>%
   summarize(med = median(value),
             wgt_med = Hmisc::wtd.quantile(value, weight_pooled, probs=0.5))
+
+## save data for histogram (journal requires this)
+
+df_hist_nonhh <- df_forhist %>%
+  filter(qty == 'Non-hh contacts') %>%
+  group_by(wave, value) %>%
+  summarize(wgt_tot = sum(weight_pooled)) %>%
+  ungroup() %>%
+  group_by(wave) %>%
+  mutate(density = wgt_tot / sum(wgt_tot)) %>%
+  select(-wgt_tot) %>%
+  ungroup()
+  
+write_csv(df_hist_nonhh,
+          file.path(out.dir, "figure_1b_num_cc_nonhh_hist_data.csv"))
+  
+## make the actual histogram
 
 hist_nonhh <- df_forhist %>%
   filter(qty == 'Non-hh contacts') %>%
