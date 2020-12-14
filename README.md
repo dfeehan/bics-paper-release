@@ -22,10 +22,11 @@ The data we provide are
 	- `df_alters_all_waves.rds` - file with info about detailed contacts reported by respondentts
 	- `df_alters_boot_all_waves.rds` - bootstrap weights to accompany df_alters_all_waves.rds
 * `data/ACS`
-	- `acs15_fb_agecat.rds` - total number of people in the US in 2015 by age categories used in FB survey
+	- `acs15_fb_agecat_withkids.rds` - total number of people in the US in 2015 by age categories used in FB survey
 	- `acs15_wave0_agecat.rds` - total number of people in the US in 2015 by age cateogries used in our survey
-	- `acs18_wave0_agecat.rds` - total number of people in the US in 2018 by age categories used in our survey
 	- `acs18_national_targets.rds` - distribution of 2018 US population by covariates that we use in calibration weighting
+	- `acs18_prem_agecat.rds` - distribution of 2018 US population by age groups that match Prem et al (2017) 
+	- `acs18_wave0_agecat.rds` - total number of people in the US in 2018 by age categories used in our survey
 	- `acs18_wave1_agecat_withkids.rds` - total number of people in the US in 2018 by age categories that include children
 * `data/fb-2015-svy`
 	- `fb_ego.csv` - survey responses
@@ -34,6 +35,8 @@ The data we provide are
 * `data/prem_contact_matrix`
 	- `prem_usa.csv` - estimated contact matrix for the United States from [Prem *et al.* (2017)](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1005697). **NOTE**: This data must be downloaded by you. See instructions below.
 * `data/polymod`
+	- [this directory starts empty, but has files generated in it by the scripts]
+* `data/contact-matrices`
 	- [this directory starts empty, but has files generated in it by the scripts]
 
 Data from Prem *et al.* (2017) - You must download this data from [here](https://doi.org/10.1371/journal.pcbi.1005697.s002). The contact matrix for the US (for all locations) is available in a tab in the `MUestimates_all_locations_2.xlsx` file in the downloaded folder. Save this tab as a `csv` file with the name `prem_usa.csv` in the `prem_contact_matrix` subfolder in the `data` folder.
