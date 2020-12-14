@@ -39,30 +39,8 @@ names(prem_mat) <- c("[0,5)", "[5,10)", "[10,15)", "[15,20)", "[20,25)",
 
 prem_mat <- prem_mat %>% as.matrix()
 
-# grab 2018 acs data for the same age categories
-acs18 <- read_ipums_micro(ddi=here('data', 'ACS', 'usa_00008.xml'))
-acs18_agecat_prem <- acs18 %>%
-  mutate(agecat = case_when(
-    AGE %in%  0:4  ~ '[0,5)',
-    AGE %in%  5:9  ~ '[5,10)',
-    AGE %in% 10:14 ~ '[10,15)',
-    AGE %in% 15:19 ~ '[15,20)',
-    AGE %in% 20:24 ~ '[20,25)',
-    AGE %in% 25:29 ~ '[25,30)',
-    AGE %in% 30:34 ~ '[30,35)',
-    AGE %in% 35:39 ~ '[35,40)',
-    AGE %in% 40:44 ~ '[40,45)',
-    AGE %in% 45:49 ~ '[45,50)',
-    AGE %in% 50:54 ~ '[50,55)',
-    AGE %in% 55:59 ~ '[55,60)',
-    AGE %in% 60:64 ~ '[60,65)',
-    AGE %in% 65:69 ~ '[65,70)',
-    AGE %in% 70:74 ~ '[70,75)',
-    AGE %in% 75:80 ~ '[75,80]')
-  ) %>%
-  select(agecat, PERWT) %>%
-  group_by(agecat) %>%
-  summarize(acs_tot = sum(PERWT))
+# grab 2018 acs data with age groups that match Prem et al 
+acs18_agecat_prem <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs18_prem_agecat.rds'))
 
 ```
 

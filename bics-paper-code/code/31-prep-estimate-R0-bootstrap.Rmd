@@ -22,34 +22,22 @@ library(extrafont)
 source(here('bics-paper-code', 'code', 'utils.R'))
 
 out.dir <- here('bics-paper-code', 'out')
+```
 
+Create an output directory for the polymod data, if it doesn't already exist
+
+```{r}
+polymod.dir <- here('bics-paper-code', 'data', 'polymod')
+dir.create(polymod.dir, showWarnings=FALSE)
 ```
 
 Load ACS age data
-```{r}
 
+```{r}
 # grab age distns with kids included for making contact matrix symmetric
 acs18_agecat_withkids_targets <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs18_wave1_agecat_withkids.rds'))
 
-
-# grab 2015 acs data for the FB matrix
-acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
-acs15_agecat_fb <- acs15 %>%
-  mutate(agecat = case_when(
-    AGE %in%  0:15  ~ '[0,15)',
-    AGE %in% 15:24 ~ '[15,25)',
-    AGE %in% 25:34 ~ '[25,35)',
-    AGE %in% 35:44 ~ '[35,45)',
-    AGE %in% 45:64 ~ '[45,65)',
-    AGE >= 65      ~ '[65,100]')
-  ) %>%
-  select(agecat, PERWT) %>%
-  group_by(agecat) %>%
-  summarize(acs_tot = sum(PERWT))
-
-  
-
-
+acs15_agecat_fb <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs15_fb_agecat_withkids.rds'))
 ```
 
 
