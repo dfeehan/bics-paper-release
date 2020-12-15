@@ -119,13 +119,6 @@ fb2015 <- read_csv(file=file.path(data.dir, 'fb-2015-svy', 'fb_ego.csv')) %>%
   mutate(city = 'FB')
 ```
 
-
-Get weighting targets
-
-```{r load-targets}
-acs18_national_targets <- readRDS(file=file.path(data.dir, 'ACS', 'acs18_national_targets.rds'))
-```
-
 Get age margins
 
 ```{r}
