@@ -103,19 +103,7 @@ polymod_mat_fb_age <- getPolymodMatrix(polymod_country = polymod_country,
                                 polymod_age_limits= c(0, 15, 25, 35, 45,  65))
 
 # grab 2015 acs data for the FB matrix
-acs15 <- read_ipums_micro(ddi=here('bics-paper-code', 'data', 'ACS', 'usa_00008.xml'))
-acs15_agecat_fb <- acs15 %>%
-  mutate(agecat = case_when(
-    AGE %in%  0:15  ~ '[0,15)',
-    AGE %in% 15:24 ~ '[15,25)',
-    AGE %in% 25:34 ~ '[25,35)',
-    AGE %in% 35:44 ~ '[35,45)',
-    AGE %in% 45:64 ~ '[45,65)',
-    AGE >= 65      ~ '[65,100]')
-  ) %>%
-  select(agecat, PERWT) %>%
-  group_by(agecat) %>%
-  summarize(acs_tot = sum(PERWT))
+acs15_agecat_fb <- readRDS(file=here('bics-paper-code', 'data', 'ACS', 'acs15_fb_agecat_withkids.rds'))
 
 # 2015 facebook study
 fb <- readRDS(file=here('bics-paper-code', 'data', 'contact-matrices', 'fb_contact_matrix_fbage.rds')) %>%
