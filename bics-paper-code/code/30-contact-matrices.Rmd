@@ -136,7 +136,8 @@ acs18_agecat_w0_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs18_wave0_
 
 acs15_w0_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs15_wave0_agecat.rds'))
 
-acs15_fb_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs15_fb_agecat.rds')) %>%
+acs15_fb_margins <- readRDS(file=file.path(data.dir, 'ACS', 'acs15_fb_agecat_withkids.rds')) %>%
+  filter(agecat != "[0,15)") %>%
   mutate(agecat_fb = factor(agecat, levels=levels(fb2015_alters$alter_agecat_fb))) %>%
   select(-agecat)
 ```
