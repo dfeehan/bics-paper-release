@@ -1,4 +1,8 @@
 
+con <- file("run_all.log")
+sink(con, append=TRUE, split=TRUE)
+sink(con, append=TRUE, type="message", split=TRUE)
+
 root.dir <- "bics-paper-release"
 
 ## Download data
@@ -23,3 +27,5 @@ for (cur_file in rmd_files) {
 	cat("================================\n")
 }
 
+sink() 
+sink(type="message")
