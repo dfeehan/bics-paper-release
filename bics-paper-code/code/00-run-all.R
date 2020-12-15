@@ -1,7 +1,6 @@
 
 con <- file("run_all.log")
 sink(con, append=TRUE, split=TRUE)
-sink(con, append=TRUE, type="message", split=TRUE)
 
 root.dir <- "bics-paper-release"
 
@@ -28,4 +27,3 @@ for (cur_file in rmd_files) {
 }
 
 sink() 
-sink(type="message")
