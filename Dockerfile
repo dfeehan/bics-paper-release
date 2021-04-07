@@ -4,7 +4,7 @@ FROM rocker/verse:4.0.2
 COPY . /home/rstudio/bics-paper-release
 
 # install dependencies described in DESCRIPTION file
-RUN Rscript -e "devtools::install_deps('/home/rstudio/bics-paper-release')"
+RUN Rscript -e "devtools::install_deps('/home/rstudio/bics-paper-release/code/prep-pipeline')"
 
 RUN touch /home/rstudio/bics-paper-release/.here
 
